@@ -1,0 +1,376 @@
+use std::str::FromStr;
+use crate::ast;
+use crate::ast::*;
+use crate::Expr;
+use crate::lexer;
+use crate::lexer::*;
+use crate::interner::*;
+use std::borrow::Borrow;
+use std::collections::VecDeque;
+
+grammar<'input>(src: &'input str, str_interner: &mut Interner<String>, byte_interner: &mut Interner<Box<[u8]>>);
+
+Tagged<E>: TaggedExpr =
+    <l: @L> <rule: E> <r: @R> =>
+        TaggedExpr::new(rule, l, r);
+
+pub primary_expression_inner: Expr = {
+    "id" => Expr::Id(str_interner.intern::<str>(<>)),
+    "int literal" => Expr::IntConst(<>.0, <>.1),
+    "float literal" => Expr::FloatConst(<>.0, <>.1),
+    "string literal" => Expr::StringConst(byte_interner.intern(&<>)),
+    "(" <e:expression_inner> ")" => e
+};
+primary_expression: TaggedExpr = Tagged<primary_expression_inner>;
+
+postfix_expression_inner: Expr = {
+    primary_expression_inner => <>,
+    <base:postfix_expression> "[" <offset:expression> "]" => Expr::Index { base, offset, },
+    <fun:postfix_expression> "(" ")" => Expr::Call { fun, args: vec![].into_boxed_slice(), },
+    <fun:postfix_expression> "(" <args:argument_expression_list> ")" => Expr::Call { fun, args, },
+    <expr:postfix_expression> "." <id:"id"> => Expr::Dot { expr, field: str_interner.intern::<str>(id) },
+    <expr:postfix_expression> "->" <id:"id"> => Expr::Arrow { expr, field: str_interner.intern::<str>(id) },
+    <expr:postfix_expression> "++" => Expr::UnaryOp { expr, unop: UnaryOp::IncPost },
+    <expr:postfix_expression> "--" => Expr::UnaryOp { expr, unop: UnaryOp::DecPost },
+};
+postfix_expression: TaggedExpr = Tagged<postfix_expression_inner>;
+
+argument_expression_list_inner: VecDeque<TaggedExpr> = {
+    <expr:assignment_expression> => {
+        let mut v = VecDeque::new();
+        v.push_front(expr);
+        v
+    },
+    <expr:assignment_expression> "," <tail:argument_expression_list_inner> => {
+        let mut tail = tail;
+        tail.push_front(expr);
+        tail
+    }
+};
+
+argument_expression_list: Box<[TaggedExpr]> =
+    argument_expression_list_inner => <Vec<_> as From<VecDeque<TaggedExpr>>>::from(<>).into_boxed_slice();
+
+unary_expression_inner: Expr = {
+    <expr:postfix_expression_inner> => expr,
+    "++" <expr:unary_expression> => Expr::UnaryOp { expr, unop: UnaryOp::IncPre, },
+    "--" <expr:unary_expression> => Expr::UnaryOp { expr, unop: UnaryOp::DecPre, },
+    <unop:unary_operator> <expr:cast_expression> => Expr::UnaryOp { expr, unop, },
+    "sizeof" <expr:unary_expression> => Expr::Sizeof { expr, },
+    "sizeof" "(" <ty:type_name> ")" => Expr::SizeofType { ty, },
+};
+unary_expression: TaggedExpr = Tagged<unary_expression_inner>;
+
+unary_operator: UnaryOp = {
+    "&" => UnaryOp::Lea,
+    "*" => UnaryOp::Deref,
+    "+" => UnaryOp::Pos,
+    "-" => UnaryOp::Neg,
+    "~" => UnaryOp::BitNeg,
+    "!" => UnaryOp::Not,
+};
+
+cast_expression_inner: Expr = {
+    unary_expression_inner => <>,
+    "(" <ty:type_name> ")" <expr:cast_expression> => Expr::Cast { ty, expr, },
+};
+cast_expression: TaggedExpr = Tagged<cast_expression_inner>;
+
+mult_expression_inner: Expr = {
+    cast_expression_inner => <>,
+    <lhs:mult_expression> "*" <rhs:cast_expression> => Expr::BinOp { lhs, rhs, op: BinOp::Mul, },
+    <lhs:mult_expression> "/" <rhs:cast_expression> => Expr::BinOp { lhs, rhs, op: BinOp::Div, },
+    <lhs:mult_expression> "%" <rhs:cast_expression> => Expr::BinOp { lhs, rhs, op: BinOp::Mod, },
+};
+mult_expression: TaggedExpr = Tagged<mult_expression_inner>;
+
+add_expression_inner: Expr = {
+    mult_expression_inner => <>,
+    <lhs:add_expression> "+" <rhs:mult_expression> => Expr::BinOp { lhs, rhs, op: BinOp::Add, },
+    <lhs:add_expression> "-" <rhs:mult_expression> => Expr::BinOp { lhs, rhs, op: BinOp::Sub, },
+};
+add_expression: TaggedExpr = Tagged<add_expression_inner>;
+
+shift_expression_inner: Expr = {
+    add_expression_inner => <>,
+    <lhs: shift_expression> "<<" <rhs: add_expression> => Expr::BinOp { lhs, rhs, op: BinOp::LShift },
+    <lhs: shift_expression> ">>" <rhs: add_expression> => Expr::BinOp { lhs, rhs, op: BinOp::RShift }
+};
+shift_expression: TaggedExpr = Tagged<shift_expression_inner>;
+
+relational_expression_inner: Expr = {
+    shift_expression_inner => <>,
+    <lhs: relational_expression> "<" <rhs: shift_expression> => Expr::BinOp { lhs, rhs, op: BinOp::Lt },
+    <lhs: relational_expression> ">" <rhs: shift_expression> => Expr::BinOp { lhs, rhs, op: BinOp::Gt },
+    <lhs: relational_expression> "<=" <rhs: shift_expression> => Expr::BinOp { lhs, rhs, op: BinOp::Lte },
+    <lhs: relational_expression> ">=" <rhs: shift_expression> => Expr::BinOp { lhs, rhs, op: BinOp::Gte },
+};
+relational_expression: TaggedExpr = Tagged<relational_expression_inner>;
+
+eq_expression_inner: Expr = {
+    relational_expression_inner => <>,
+    <lhs: eq_expression> "==" <rhs: relational_expression> => Expr::BinOp { lhs, rhs, op: BinOp::Eq, },
+    <lhs: eq_expression> "!=" <rhs: relational_expression> => Expr::BinOp { lhs, rhs, op: BinOp::Neq, },
+};
+eq_expression: TaggedExpr = Tagged<eq_expression_inner>;
+
+and_expression_inner: Expr = {
+    eq_expression_inner => <>,
+    <lhs: and_expression> "&" <rhs:eq_expression> => Expr::BinOp { lhs, rhs, op: BinOp::BAnd, },
+};
+and_expression: TaggedExpr = Tagged<and_expression_inner>;
+
+xor_expression_inner: Expr = {
+    and_expression_inner => <>,
+    <lhs: xor_expression> "^" <rhs:and_expression> => Expr::BinOp { lhs, rhs, op: BinOp::Xor, },
+};
+xor_expression: TaggedExpr = Tagged<xor_expression_inner>;
+
+or_expression_inner: Expr = {
+    xor_expression_inner => <>,
+    <lhs: or_expression> "|" <rhs:xor_expression> => Expr::BinOp { lhs, rhs, op: BinOp::BOr, },
+};
+or_expression: TaggedExpr = Tagged<or_expression_inner>;
+
+land_expression_inner: Expr = {
+    or_expression_inner => <>,
+    <lhs: land_expression> "&&" <rhs:or_expression> => Expr::BinOp { lhs, rhs, op: BinOp::LAnd, },
+};
+land_expression: TaggedExpr = Tagged<land_expression_inner>;
+
+lor_expression_inner: Expr = {
+    land_expression_inner => <>,
+    <lhs: lor_expression> "||" <rhs:land_expression> => Expr::BinOp { lhs, rhs, op: BinOp::LOr, },
+};
+lor_expression: TaggedExpr = Tagged<lor_expression_inner>;
+
+ternary_expression_inner: Expr = {
+    <cond:lor_expression> "?" <tval:expression> ":" <fval:ternary_expression> =>
+        Expr::Ternary { cond, tval, fval, },
+    lor_expression_inner => <>,
+};
+ternary_expression: TaggedExpr = Tagged<ternary_expression_inner>;
+
+assignment_expression_inner: Expr = {
+    ternary_expression_inner => <>,
+    <lhs:unary_expression> <op:assignment_operator> <rhs:assignment_expression> =>
+        Expr::BinOp { lhs, rhs, op, }
+};
+assignment_expression: TaggedExpr = Tagged<assignment_expression_inner>;
+
+assignment_operator: BinOp = {
+    "*=" => BinOp::MulAssign,
+    "/=" => BinOp::DivAssign,
+    "%=" => BinOp::ModAssign,
+    "+=" => BinOp::AddAssign,
+    "-=" => BinOp::SubAssign,
+    "<<=" => BinOp::LshAssign,
+    ">>=" => BinOp::RshAssign,
+    "&=" => BinOp::AndAssign,
+    "^=" => BinOp::XorAssign,
+    "|=" => BinOp::OrAssign,
+    "=" => BinOp::Assign,
+};
+
+expression_inner: Expr = {
+    <argument_expression_list_inner> => {
+        if <>.len() == 1 {
+            let mut x = <>;
+            *x.pop_front().unwrap().expr
+        } else {
+            let exprs = <Vec<_> as From<VecDeque<TaggedExpr>>>::from(<>).into_boxed_slice();
+            Expr::Comma { exprs, }
+        }
+    }
+};
+expression: TaggedExpr = Tagged<expression_inner>;
+
+spec_qual_list: TySpecQualList = {
+    <spec:type_specifier> <l:spec_qual_list> => {
+        let mut l = l;
+        l.add_spec(spec)
+    },
+    <spec:type_specifier> => {
+        let mut l = TySpecQualList::new();
+        l.add_spec(spec)
+    },
+    <qual:type_qualifier> <l:spec_qual_list> => {
+        let mut l = l;
+        l.add_qual(qual)
+    },
+    <qual:type_qualifier> => {
+        let mut l = TySpecQualList::new();
+        l.add_qual(qual)
+    }
+};
+
+ptr_inner: i32 = {
+    "*" => 0,
+    "*" <quals:type_qualifier_list> => quals,
+};
+
+pointer: PtrTy =
+    <ps:ptr_inner+> => PtrTy(ps);
+
+abstract_declarator: AbsDecl = {
+    pointer => AbsDecl::Ptr(<>),
+    direct_abstract_declarator => AbsDecl::Direct(<>),
+    <p:pointer> <d:direct_abstract_declarator> => AbsDecl::PtrTo(p, d),
+};
+
+direct_abstract_declarator: DirAbsDecl = {
+    "(" <ad:abstract_declarator> ")" => 
+        DirAbsDecl::AbsDecl(Box::new(ad)),
+    "[" "]" => 
+        DirAbsDecl::Array(None, None),
+    "[" <expr:ternary_expression> "]" => 
+        DirAbsDecl::Array(None, Some(expr)),
+    <d:direct_abstract_declarator> "[" "]" =>
+        DirAbsDecl::Array(Some(Box::new(d)), None),
+    <d:direct_abstract_declarator> "[" <expr:ternary_expression> "]" =>
+        DirAbsDecl::Array(Some(Box::new(d)), Some(expr)),
+    <d:direct_abstract_declarator> "(" <params:parameter_type_list> ")" => 
+        DirAbsDecl::Fn(Box::new(d), params),
+};
+
+parameter_type_list_inner: VecDeque<Ty> = {
+    <ty:type_name> => { 
+        let mut x = VecDeque::new();
+        x.push_front(ty);
+        x
+    },
+    <ty:type_name> "," <tail:parameter_type_list_inner> => {
+        let mut x = tail;
+        x.push_front(ty);
+        x
+    }
+};
+
+parameter_type_list: Box<[Ty]> = {
+    <parameter_type_list_inner> => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice(),
+    => Box::new([]),
+};
+
+type_qualifier_list: i32 = {
+    <q:type_qualifier> => q as i32,
+    <l:type_qualifier_list> <q:type_qualifier> => l as i32 | q as i32,
+};
+
+type_qualifier: TyQual = {
+    "volatile" => TyQual::Volatile,
+    "const" => TyQual::Const,
+};
+
+type_specifier: TySpec = {
+    "unsigned" => TySpec::Unsigned,
+    "signed" => TySpec::Signed,
+    "long" => TySpec::Long,
+    "int" => TySpec::Int,
+    "void" => TySpec::Void,
+    "char" => TySpec::Char,
+    "short" => TySpec::Short,
+    "float" => TySpec::Float,
+    "double" => TySpec::Double,
+};
+
+type_name: Ty = {
+    <sqs:spec_qual_list> => sqs.into_type(),
+    <sqs:spec_qual_list> <ad:abstract_declarator> => ad.wrap_type(sqs.into_type()),
+};
+
+pub type_name_program: Ty = {
+    <sqs:spec_qual_list> "eof" => sqs.into_type(),
+    <sqs:spec_qual_list> <ad:abstract_declarator> "eof" => ad.wrap_type(sqs.into_type()), 
+
+};
+extern {
+    type Location = usize;
+    type Error = lexer::LexError;
+
+    enum lexer::Tok<'input> {
+        "auto" => Tok::KWAuto,
+        "break" => Tok::KWBreak,
+        "const" => Tok::KWConst,
+        "case" => Tok::KWCase,
+        "char" => Tok::KWChar,
+        "continue" => Tok::KWContinue,
+        "default" => Tok::KWDefault,
+        "do" => Tok::KWDo,
+        "double" => Tok::KWDouble,
+        "else" => Tok::KWElse,
+        "enum" => Tok::KWEnum,
+        "extern" => Tok::KWExtern,
+        "float" => Tok::KWFloat,
+        "for" => Tok::KWFor,
+        "goto" => Tok::KWGoto,
+        "if" => Tok::KWIf,
+        "int" => Tok::KWInt,
+        "long" => Tok::KWLong,
+        "register" => Tok::KWRegister,
+        "return" => Tok::KWReturn,
+        "short" => Tok::KWShort,
+        "signed" => Tok::KWSigned,
+        "sizeof" => Tok::KWSizeof,
+        "static" => Tok::KWStatic,
+        "struct" => Tok::KWStruct,
+        "switch" => Tok::KWSwitch,
+        "typedef" => Tok::KWTypedef,
+        "union" => Tok::KWUnion,
+        "unsigned" => Tok::KWUnsigned,
+        "void" => Tok::KWVoid,
+        "volatile" => Tok::KWVolatile,
+        "while" => Tok::KWWhile,
+        "int literal" => Tok::Int(<(i128, lexer::IntType)>),
+        "float literal" => Tok::Float(<(f64, lexer::FloatType)>),
+        "string literal" => Tok::String(<Box<[u8]>>),
+        "char literal" => Tok::Char(<u8>),
+        "id" => Tok::Id(<&'input str>),
+        "ellipsis" => Tok::Ellipsis,
+        ">>=" => Tok::RightAssign,
+        "<<=" => Tok::LeftAssign,
+        "+=" => Tok::AddAssign,
+        "-=" => Tok::SubAssign,
+        "*=" => Tok::MulAssign,
+        "/=" => Tok::DivAssign,
+        "%=" => Tok::ModAssign,
+        "&=" => Tok::AndAssign,
+        "^=" => Tok::XorAssign,
+        "|=" => Tok::OrAssign,
+        "=" => Tok::Assign,
+        ">>" => Tok::RightSh,
+        "<<" => Tok::LeftSh,
+        "++" => Tok::Inc,
+        "--" => Tok::Dec,
+        "->" => Tok::Arrow,
+        "&&" => Tok::LAnd,
+        "||" => Tok::LOr,
+        "<" => Tok::Lt,
+        "<=" => Tok::Lte,
+        ">" => Tok::Gt,
+        ">=" => Tok::Gte,
+        "==" => Tok::Eq,
+        "!=" => Tok::Neq,
+        ";" => Tok::Semicolon,
+        "[" => Tok::BrackOpen,
+        "]" => Tok::BrackClose,
+        "{" => Tok::BraceOpen,
+        "}" => Tok::BraceClose,
+        "(" => Tok::ParOpen,
+        ")" => Tok::ParClose,
+        "," => Tok::Comma,
+        ":" => Tok::Colon,
+        "." => Tok::Dot,
+        "!" => Tok::LNot,
+        "~" => Tok::BNot,
+        "-" => Tok::Sub,
+        "+" => Tok::Add,
+        "*" => Tok::Mul,
+        "/" => Tok::Div,
+        "%" => Tok::Mod,
+        "^" => Tok::Xor,
+        "|" => Tok::BOr,
+        "&" => Tok::BAnd,
+        "?" => Tok::Qmark,
+        "eof" => Tok::EOF,
+    }
+}
