@@ -1,19 +1,55 @@
-use std::boxed::*;
-use crate::lexer::{IntType, FloatType};
-use crate::interner::*;
+use std::cmp::Ordering;
 
-#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Ord, PartalOrd, Eq, PartialEq, Debug)]
+pub enum StructType {
+    Struct,
+    Union
+}
+
+#[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
 #[repr(i32)]
 pub enum TySpec {
-    Unsigned    = -1,
-    Signed      = -2,
-    Long        = 0,
-    Int         = 1,
-    Void        = 2,
-    Char        = 3,
-    Short       = 4,
-    Float       = 5,
-    Double      = 6,
+    Unsigned,
+    Signed,
+    Long,
+    Int,
+    Void,
+    Char,
+    Short,
+    Float,
+    Double,
+    Structure(StructType, Option<Vec<StructDeclaration>>),
+    Enum(Option<Vec<EnumDeclaration>>),
+}
+
+impl TySpec {
+    fn as_i32(&self) -> i32 {
+        match &self {
+            Unsigned  => -1,
+            Signed    => -2,
+            Long      => 0,
+            Int       => 1,
+            Void      => 2,
+            Char      => 3,
+            Short     => 4,
+            Float     => 5,
+            Double    => 6,
+            Structure(StructType, Option<Vec<StructDeclaration>>) => 7,
+            Enum(Option<Vec<EnumDeclaration>>) => 8,
+        }
+    }
+}
+
+impl Ord for TySpec {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.as_i32().cmp(other.as_i32())
+    }
+}
+
+impl PartialOrd for TySpec {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -124,63 +160,6 @@ impl PtrTy {
     }
 }
 
-pub enum AbsDecl {
-    Ptr(PtrTy),
-    PtrTo(PtrTy, DirAbsDecl),
-    Direct(DirAbsDecl),
-}
-
-impl AbsDecl {
-
-    pub fn wrap_type(self, ty: Ty) -> Ty {
-        use AbsDecl::*;
-
-        match self {
-            Ptr(ptr_ty) =>
-                ptr_ty.wrap_type(ty),
-            PtrTo(ptr_ty, dir_abs_decl) =>
-                dir_abs_decl.wrap_type(ptr_ty.wrap_type(ty)),
-            Direct(dir_abs_decl) =>
-                dir_abs_decl.wrap_type(ty),
-        }
-    }
-
-}
-
-pub enum DirAbsDecl {
-    /// Function with arguments, the return type is not specified here
-    Fn(Box<DirAbsDecl>, Box<[Ty]>),
-    Array(Option<Box<DirAbsDecl>>, Option<TaggedExpr>),
-    AbsDecl(Box<AbsDecl>),
-}
-
-impl DirAbsDecl {
-
-    fn box_size(size: Option<TaggedExpr>) -> Option<Box<TaggedExpr>> {
-        size.map(|x| Box::new(x))
-    }
-
-    pub fn wrap_type(self, ty: Ty) -> Ty {
-        use DirAbsDecl::*;
-        match self {
-            Fn(abs_decl, tys) => {
-                abs_decl.wrap_type(Ty::new(TyKind::Fn(Box::new(ty), tys), false, false))
-            },
-            Array(None, size) => {
-                Ty::new(TyKind::Array(Box::new(ty), Self::box_size(size)), false, false)
-            },
-            Array(Some(pre), size) => {
-                let t = Ty::new(TyKind::Array(Box::new(ty), Self::box_size(size)), false, false);
-                pre.wrap_type(t)
-            },
-            AbsDecl(decl) => {
-                decl.wrap_type(ty)
-            }
-        }
-    }
-
-}
-
 #[derive(Clone, Copy)]
 pub enum IntegralTy {
     I64,
@@ -288,70 +267,4 @@ impl Ty {
         }
         format!("{} {}", s, self.kind.pretty_print(str_interner))
     }
-}
-
-pub struct TaggedExpr {
-    pub ty: Option<Ty>,
-    pub loc: (usize, usize),
-    pub expr: Box<Expr>,
-}
-
-impl TaggedExpr {
-    pub fn new(expr: Expr, start: usize, end: usize) -> Self {
-        TaggedExpr {
-            expr: Box::new(expr),
-            ty: None,
-            loc: (start, end)
-        }
-    }
-
-    pub fn pretty_print(&self) -> String {
-        "<some expression>".to_string()
-    }
-}
-
-pub enum UnaryOp {
-    Lea,
-    Deref,
-    Pos,
-    Neg,
-    BitNeg,
-    Not,
-    IncPre,
-    IncPost,
-    DecPre,
-    DecPost,
-}
-
-pub enum BinOp {
-    Mul, Div, Mod,
-    Add, Sub,
-    LShift, RShift,
-    Gt, Lt, Gte, Lte, Eq, Neq,
-    Nop,
-    BAnd, BOr, Xor,
-    LAnd, LOr,
-    Assign,
-    MulAssign, DivAssign, ModAssign,
-    AddAssign, SubAssign,
-    LshAssign, RshAssign,
-    AndAssign, XorAssign, OrAssign,
-}
-
-pub enum Expr {
-    Index { base: TaggedExpr, offset: TaggedExpr, },
-    Call { fun: TaggedExpr, args: Box<[TaggedExpr]>, },
-    Dot { expr: TaggedExpr, field: IValue<String>, },
-    Arrow { expr: TaggedExpr, field: IValue<String>, },
-    UnaryOp { expr: TaggedExpr, unop: UnaryOp, },
-    Sizeof { expr: TaggedExpr, },
-    SizeofType { ty: Ty, },
-    Cast { ty: Ty, expr: TaggedExpr, },
-    BinOp { lhs: TaggedExpr, op: BinOp, rhs: TaggedExpr, },
-    Ternary { cond: TaggedExpr, tval: TaggedExpr, fval: TaggedExpr, },
-    Comma { exprs: Box<[TaggedExpr]> },
-    StringConst(IValue<Box<[u8]>>),
-    IntConst(i128, IntType),
-    FloatConst(f64, FloatType),
-    Id(IValue<String>),
 }
