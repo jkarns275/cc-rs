@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use data_type::StructDeclaration;
 
 #[derive(Copy, Clone, Ord, PartalOrd, Eq, PartialEq, Debug)]
 pub enum StructType {
@@ -18,8 +19,8 @@ pub enum TySpec {
     Short,
     Float,
     Double,
-    Structure(StructType, Option<Vec<StructDeclaration>>),
-    Enum(Option<Vec<EnumDeclaration>>),
+    Structure(StructType, Option<StructDeclaration>),
+    Enum(Option<EnumDeclaration>),
 }
 
 impl TySpec {

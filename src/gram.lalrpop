@@ -14,8 +14,6 @@ Tagged<E>: TaggedExpr =
     <l: @L> <rule: E> <r: @R> =>
         TaggedExpr::new(rule, l, r);
 
-reversed_list
-
 pub primary_expression_inner: Expr = {
     "id" => Expr::Id(str_interner.intern::<str>(<>)),
     "int literal" => Expr::IntConst(<>.0, <>.1),
@@ -296,9 +294,9 @@ struct_or_union_specifier: TyKind = {
         ,
 };
 
-struct_or_union: DataType = {
-    "struct" => DataType::Struct,
-    "union" => DataType::Union,
+struct_or_union: StructType = {
+    "struct" => StructType::Struct,
+    "union" => StructType::Union,
 };
 
 struct_declaration_list_inner: VecDeque<FieldDecl> = {
@@ -322,7 +320,7 @@ struct_declaration: FieldDecl = {
     specifier_qualifier_list struct_declarator_list ";" => {},
 };
 
-struct_declarator_list_inner: Box<[FieldDeclarator]> = {
+struct_declarator_list_inner: VecDeque<StructDeclarator> = {
     struct_declarator => {
         let mut decls = VecDeque::new();
         decls.push_front(<>);
@@ -334,8 +332,11 @@ struct_declarator_list_inner: Box<[FieldDeclarator]> = {
         decls
     }
 };
+struct_declarator_list: Box<[StructDeclarator]> = {
+    enumerator_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice() 
+};
 
-struct_declarator: FieldDeclarator = {
+struct_declarator: StructDeclarator = {
     declarator => ,
     ":" constant_expression => ,
     declarator ":" constant_expression => ,
@@ -345,7 +346,6 @@ enum_specifier: TySpec = {
     "enum" "{" enumerator_list "}" => ,
     "enum" <id:"id"> "{" enumerator_list "}" => ,
     "enum" <id:"id"> => {
-
     },
 };
 
@@ -383,6 +383,9 @@ direct_declarator: DirDecl = {
         DirDecl::Array(Some(Box::new(d)), Some(expr)),
     <d:direct_declarator> "(" <params:parameter_type_list> ")" => 
         DirDecl::Fn(Box::new(d), params),
+    <d:direct_declarator> "(" ")" => 
+        DirDecl::Fn(Box::new(d), Box::new([])),
+    <d:direct_declarator> "(" <params:identifier_list> ")" => 
 };
 
 parameter_type_list: ? = {
@@ -407,7 +410,7 @@ identifer_list: Box<[IString]> = {
 };
 
 parameter_list_inner: VecDeque<?> = {
-    parameter_declaraton => {
+    parameter_declaration => {
         let mut v = VecDeque::new();
         v.push_front(<>);
         v
@@ -420,6 +423,11 @@ parameter_list_inner: VecDeque<?> = {
 };
 parameter_list: Box<[?]> = {
     parameter_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice()
+};
+parameter_declaration: ? = {
+    declaration_specifiers declarator => ,
+    declaration_specifiers abstract_declarator => ,
+    declaration_specifiers => ,
 };
 
 initializer: ? = {
