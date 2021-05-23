@@ -1,5 +1,6 @@
 use ty::*;
 
+#[derive(Clone)]
 pub enum AbsDecl {
     Ptr(PtrTy),
     PtrTo(PtrTy, DirAbsDecl),
@@ -23,6 +24,7 @@ impl AbsDecl {
 
 }
 
+#[derive(Clone)]
 pub enum DirAbsDecl {
     /// Function with arguments, the return type is not specified here
     Fn(Box<DirAbsDecl>, Box<[Ty]>),

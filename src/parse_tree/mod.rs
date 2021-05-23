@@ -2,7 +2,9 @@ mod ty;
 mod abs_decl;
 mod data_type;
 mod declarator;
+mod declaraton;
 
+pub use declaration::*;
 pub use declarator::*;
 pub use data_type::*;
 pub use abs_decl::*;

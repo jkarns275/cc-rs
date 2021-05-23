@@ -299,7 +299,7 @@ struct_or_union: StructType = {
     "union" => StructType::Union,
 };
 
-struct_declaration_list_inner: VecDeque<FieldDecl> = {
+struct_declaration_list_inner: VecDeque<StructDeclarator> = {
     struct_declaration => {
         let mut decls = VecDeque::new();
         decls.push_front(<>);
@@ -312,11 +312,11 @@ struct_declaration_list_inner: VecDeque<FieldDecl> = {
     }
 };
 
-struct_declaration_list: Box<[FieldDecl]> = {
+struct_declaration_list: Box<[StructDeclarator]> = {
     struct_declaration_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice()
 };
 
-struct_declaration: FieldDecl = {
+struct_declaration: StructDeclarator = {
     specifier_qualifier_list struct_declarator_list ";" => {},
 };
 
@@ -374,26 +374,29 @@ declarator: Declarator = {
 };
 
 direct_declarator: DirDecl = {
-    "id" => ,
-    "(" <ad:declarator> ")" => 
-        DirDecl::Decl(Box::new(ad)),
+    "id" => DirDecl::Id(<>),
+    "(" <ad:declarator> ")" =>
+        DirDecl::Declarator(Box::new(ad)),
     <d:direct_declarator> "[" "]" =>
-        DirDecl::Array(Some(Box::new(d)), None),
+        DirDecl::Array(Box::new(d), None),
     <d:direct_declarator> "[" <expr:ternary_expression> "]" =>
-        DirDecl::Array(Some(Box::new(d)), Some(expr)),
+        DirDecl::Array(Box::new(d), Some(expr)),
     <d:direct_declarator> "(" <params:parameter_type_list> ")" => 
         DirDecl::Fn(Box::new(d), params),
     <d:direct_declarator> "(" ")" => 
         DirDecl::Fn(Box::new(d), Box::new([])),
     <d:direct_declarator> "(" <params:identifier_list> ")" => 
+        DirDecl::id_fn(d, params),
 };
 
-parameter_type_list: ? = {
-    parameter_list => ,
-    parameter_list "," "..." => ,
+parameter_type_list: ParamList = {
+    parameter_list =>
+        ParamList { params: <>, varargs: false, },
+    parameter_list "," "..." =>
+        ParamList { params: <>, varargs: true, },
 };
 
-identifer_list_inner: VecDeque<IString> = {
+identifer_list_inner: VecDeque<IValue<String>> = {
     "id" => {
         let mut v = VecDeque::new();
         v.push(<>);
@@ -405,11 +408,11 @@ identifer_list_inner: VecDeque<IString> = {
         tail
     },
 };
-identifer_list: Box<[IString]> = {
+identifer_list: Box<[IValue<String>]> = {
     identifer_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice(),
 };
 
-parameter_list_inner: VecDeque<?> = {
+parameter_list_inner: VecDeque<ParamDeclaration> = {
     parameter_declaration => {
         let mut v = VecDeque::new();
         v.push_front(<>);
@@ -421,22 +424,22 @@ parameter_list_inner: VecDeque<?> = {
         t
     },
 };
-parameter_list: Box<[?]> = {
+parameter_list: Box<[ParamDeclaration]> = {
     parameter_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice()
 };
-parameter_declaration: ? = {
-    declaration_specifiers declarator => ,
-    declaration_specifiers abstract_declarator => ,
-    declaration_specifiers => ,
+parameter_declaration: ParamDeclaration = {
+    <spec:declaration_specifiers> <d:declarator> => ParamDeclaration::from_decl(spec, d),
+    <spec:declaration_specifiers> <ad:abstract_declarator> => ParamDeclaration::from_abs_decl(spec, ad),
+    <spec:declaration_specifiers> => ParamDeclaration::from_spec(spec),
 };
 
-initializer: ? = {
-    assignment_expression => ,
-    "{" initializer_list "}" => ,
-    "{" initializer_list "," "}" => ,
+initializer: Initializer = {
+    assignment_expression => Initializer::Expr(assignment_expression),
+    "{" initializer_list "}" => Initializer::Structure(initializer_list),
+    "{" initializer_list "," "}" => Initializer::Structure(initializer_list),
 };
 
-initializer_list_inner: ? = {
+initializer_list_inner: VecDeque<Initializer> = {
     initializer => {
         let mut v = VecDeque::new();
         v.push_front(<>);
@@ -448,7 +451,7 @@ initializer_list_inner: ? = {
         t
     },
 };
-initializer_list: Box<[?]> = {
+initializer_list: Box<[Initializer]> = {
     initializer_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice()
 };
 
@@ -472,6 +475,10 @@ compount_statement: Statement = {
     "{" statement_list "}" => ,
     "{" declaration_list "}" => ,
     "{" declaration_list statement_list "}" => ,
+};
+
+declaration: Declaraton = {
+
 };
 
 declaration_list_inner: ? = {
@@ -558,6 +565,29 @@ function_definition: ? = {
     declaration_specifiers declarator compount_statement => ,
     declarator declaration_list compount_statement => ,
     declarator compount_statement => ,
+};
+
+storage_class_specifier: StorageClassSpec = {
+    "register" => StorageClassSpec::Register,
+    "typedef" => StorageClassSpec::Typedef,
+    "extern" => StorageClassSpec::Extern,
+    "static" => StorageClassSpec::Static,
+    "auto" => StorageClassSpec::Auto,
+};
+
+declaration_specifiers: = {
+    storage_class_specifier =>
+        DeclSpec::new().add_storage_class_spec(<>),
+    <s:storage_class_specifier> <ds:declaration_specifiers> => 
+        ds.add_storage_class_spec(s),
+    type_specifier =>
+        DeclSpec::new().add_type_spec(<>),
+    <t:type_specifier> <ds:declaration_specifiers> => 
+        ds.add_type_spec(t), 
+    type_qualifier => 
+        DeclSpec::new().add_type_qual(<>),
+    <q:type_qualifier> <ds:declaration_specifiers> => 
+        ds.add_type_qual(q),
 };
 
 extern {

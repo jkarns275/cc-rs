@@ -19,8 +19,8 @@ pub enum TySpec {
     Short,
     Float,
     Double,
-    Structure(StructType, Option<StructDeclaration>),
-    Enum(Option<EnumDeclaration>),
+    Structure(IValue<String>),
+    Enum(IValue<String>),
 }
 
 impl TySpec {
@@ -35,8 +35,8 @@ impl TySpec {
             Short     => 4,
             Float     => 5,
             Double    => 6,
-            Structure(StructType, Option<Vec<StructDeclaration>>) => 7,
-            Enum(Option<Vec<EnumDeclaration>>) => 8,
+            Structure(_) => 7,
+            Enum(_) => 8,
         }
     }
 }
@@ -56,8 +56,10 @@ impl PartialOrd for TySpec {
 #[derive(Copy, Clone)]
 #[repr(i32)]
 pub enum TyQual {
-    Const = 0x1,
-    Volatile = 0x2,
+    None        = 0x00,
+    Const       = 0b01,
+    Volatile    = 0b10,
+    ConstVol    = 0b11,
 }
 
 impl TyQual {
@@ -118,6 +120,10 @@ impl TySpecQualList {
         Ty::new(self.get_ty_kind(), TyQual::is_volatile(self.quals), TyQual::is_const(self.quals))
     }
 
+    pub fn get_type(&mut self) -> Ty {
+        Ty::new(self.get_ty_kind(), TyQual::is_volatile(self.quals), TyQual::is_const(self.quals))
+    }
+
     pub fn add_qual(mut self, q: TyQual) -> Self {
         self.quals |= q as i32;
         self
@@ -138,7 +144,7 @@ pub struct PtrTy(pub Vec<i32>);
 impl PtrTy {
     pub fn new() -> Self { PtrTy(vec![]) }
 
-    pub fn wrap_type(self, mut ty: Ty) -> Ty {
+    pub fn wrap_type(&self, mut ty: Ty) -> Ty {
         if self.0.len() == 0 {
             ty
         } else {
@@ -146,7 +152,7 @@ impl PtrTy {
             // e.g. char * * volatile is a volatile pointer to a pointer to a char
             //      char * volatile * is a pointer to a volatile pointer to a char.
             // But the order that the parser reads them in should be reversed...
-            for x in self.0.into_iter() {
+            for &x in self.0.iter() {
                 let volatile = TyQual::is_volatile(x);
                 let constant = TyQual::is_const(x);
                 ty = Ty::new(TyKind::Ptr(Box::new(ty)), volatile, constant);
