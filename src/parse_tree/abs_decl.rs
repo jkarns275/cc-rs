@@ -1,4 +1,4 @@
-use ty::*;
+use crate::parse_tree::*;
 
 #[derive(Clone)]
 pub enum AbsDecl {

@@ -1,13 +1,14 @@
 use std::cmp::Ordering;
-use data_type::StructDeclaration;
+use crate::interner::*;
+use crate::parse_tree::*;
 
-#[derive(Copy, Clone, Ord, PartalOrd, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialOrd, Ord, Eq, PartialEq, Debug)]
 pub enum StructType {
     Struct,
     Union
 }
 
-#[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 #[repr(i32)]
 pub enum TySpec {
     Unsigned,
@@ -26,24 +27,24 @@ pub enum TySpec {
 impl TySpec {
     fn as_i32(&self) -> i32 {
         match &self {
-            Unsigned  => -1,
-            Signed    => -2,
-            Long      => 0,
-            Int       => 1,
-            Void      => 2,
-            Char      => 3,
-            Short     => 4,
-            Float     => 5,
-            Double    => 6,
-            Structure(_) => 7,
-            Enum(_) => 8,
+            TySpec::Unsigned  => -1,
+            TySpec::Signed    => -2,
+            TySpec::Long      => 0,
+            TySpec::Int       => 1,
+            TySpec::Void      => 2,
+            TySpec::Char      => 3,
+            TySpec::Short     => 4,
+            TySpec::Float     => 5,
+            TySpec::Double    => 6,
+            TySpec::Structure(_) => 7,
+            TySpec::Enum(_) => 8,
         }
     }
 }
 
 impl Ord for TySpec {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.as_i32().cmp(other.as_i32())
+        self.as_i32().cmp(&other.as_i32())
     }
 }
 
@@ -72,6 +73,7 @@ impl TyQual {
     }
 }
 
+#[derive(Clone)]
 pub struct TySpecQualList {
     pub specs: Vec<TySpec>,
     pub quals: i32,
@@ -139,6 +141,7 @@ impl TySpecQualList {
  * Each element in the vector represents a pointer, and the actual value corresponds
  * to a i32 with bit flag set of TyQuals.
  */
+#[derive(Clone)]
 pub struct PtrTy(pub Vec<i32>);
 
 impl PtrTy {
@@ -213,6 +216,7 @@ impl FloatTy {
 
 }
 
+#[derive(Clone)]
 pub enum TyKind {
     Named(IValue<String>),
     Struct(IValue<String>),
@@ -223,6 +227,7 @@ pub enum TyKind {
     Float(FloatTy),
     Array(Box<Ty>, Option<Box<TaggedExpr>>),
     Void,
+    TBD,
 }
 
 impl TyKind {
@@ -253,6 +258,7 @@ impl TyKind {
 
 }
 
+#[derive(Clone)]
 pub struct Ty {
     pub kind: TyKind,
     pub volatile: bool,

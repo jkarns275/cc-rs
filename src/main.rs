@@ -1,16 +1,15 @@
 #[macro_use] extern crate lalrpop_util;
 
-mod ast;
+mod parse_tree;
 mod lexer;
 mod interner;
 
 
 use crate::interner::*;
 use crate::lexer::*;
-use crate::ast::*;
+use crate::parse_tree::*;
 
-mod gram;
-
+lalrpop_mod!(pub gram);
 use std::io::{self, BufRead};
 
 fn main() {

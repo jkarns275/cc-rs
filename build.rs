@@ -6,5 +6,5 @@ fn main() {
         .process_file("src/gram.lalrpop")
         .unwrap();
 
-    println!("cargo:rerun-if-changed=src/grammar.lalrpop");
+    println!("cargo:rerun-if-changed=src/gram.lalrpop");
 }

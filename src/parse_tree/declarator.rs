@@ -1,4 +1,4 @@
-use ty::*;
+use crate::parse_tree::*;
 
 pub struct Declarator {
     pub id: IValue<String>,
@@ -13,18 +13,29 @@ impl Declarator {
     }
 
     pub fn wrap_type(&self, ty: Ty) -> Ty {
-        match kind {
+        match self.kind {
             DeclaratorKind::PtrTo(ptr_ty, dir_decl) =>
                 dir_decl.wrap_type(ptr_ty.wrap_type(ty)),
             DeclaratorKind::Direct(dir_decl) =>
                 dir_decl.wrap_type(ty),
         }
     }
+
+    pub fn get_id(&self) -> IValue<String> {
+        self.id
+    }
+
 }
 
 pub struct InitDeclarator {
     pub decl: Declarator,
     pub initializer: Option<Initializer>,
+}
+
+impl InitDeclarator {
+    pub fn new(decl: Declarator, initializer: Option<Initializer>) -> Self {
+        InitDeclarator { decl, initializer }
+    }
 }
 
 pub enum Initializer {
@@ -44,13 +55,14 @@ impl DeclaratorKind {
 
         match self {
             PtrTo(ptr_ty, dir_decl) =>
-                dir_abs_decl.wrap_type(ptr_ty.wrap_type(ty)),
+                dir_decl.wrap_type(ptr_ty.wrap_type(ty)),
             Direct(dir_decl) =>
-                dir_abs_decl.wrap_type(ty),
+                dir_decl.wrap_type(ty),
         }
     }
 
     pub fn get_id(&self) -> IValue<String> {
+        use DeclaratorKind::*;
         match &self {
             PtrTo(ptr, dir_decl) => dir_decl.get_id(),
             Direct(dir_decl) => dir_decl.get_id(),
@@ -75,15 +87,17 @@ impl DirDecl {
     pub fn id_fn(decl: DirDecl, args: Box<[IValue<String>]>) -> Self {
         let args = args
             .into_iter()
-            .map(ParamDeclaration::from_id)
+            .map(|&x| ParamDeclaration::from_id(x))
             .collect::<Vec<_>>();
         let param_list = ParamList::new(args.into_boxed_slice(), false);
         DirDecl::Fn(Box::new(decl), param_list)
     }
 
-    pub fn get_id(&self) -> Self {
+    pub fn get_id(&self) -> IValue<String> {
+        use DirDecl::*;
+
         match &self {
-            Id(x) => x,
+            Id(x) => *x,
             Fn(dir, _) => dir.get_id(),
             Array(dir, _) => dir.get_id(),
             Declarator(decl) => decl.get_id(),
@@ -97,14 +111,11 @@ impl DirDecl {
     pub fn wrap_type(&self, ty: Ty) -> Ty {
         use DirDecl::*;
         match self {
-            Fn(abs_decl, tys) => {
-                abs_decl.wrap_type(Ty::new(TyKind::Fn(Box::new(ty), tys), false, false))
+            Fn(decl, tys) => {
+                decl.wrap_type(Ty::new(TyKind::Fn(Box::new(ty), tys.get_types()), false, false))
             },
-            Array(None, size) => {
-                Ty::new(TyKind::Array(Box::new(ty), Self::box_size(size)), false, false)
-            },
-            Array(Some(pre), size) => {
-                let t = Ty::new(TyKind::Array(Box::new(ty), Self::box_size(size)), false, false);
+            Array(pre, size) => {
+                let t = Ty::new(TyKind::Array(Box::new(ty), Self::box_size(size.clone())), false, false);
                 pre.wrap_type(t)
             },
             Declarator(decl) => {

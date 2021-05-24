@@ -1,12 +1,10 @@
 use std::str::FromStr;
-use crate::ast;
-use crate::ast::*;
-use crate::Expr;
 use crate::lexer;
 use crate::lexer::*;
 use crate::interner::*;
 use std::borrow::Borrow;
 use std::collections::VecDeque;
+use crate::parse_tree::*;
 
 grammar<'input>(src: &'input str, str_interner: &mut Interner<String>, byte_interner: &mut Interner<Box<[u8]>>);
 
@@ -246,11 +244,6 @@ parameter_type_list_inner: VecDeque<Ty> = {
     }
 };
 
-parameter_type_list: Box<[Ty]> = {
-    <parameter_type_list_inner> => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice(),
-    => Box::new([]),
-};
-
 type_qualifier_list: i32 = {
     <q:type_qualifier> => q as i32,
     <l:type_qualifier_list> <q:type_qualifier> => l as i32 | q as i32,
@@ -317,7 +310,7 @@ struct_declaration_list: Box<[StructDeclarator]> = {
 };
 
 struct_declaration: StructDeclarator = {
-    specifier_qualifier_list struct_declarator_list ";" => {},
+    spec_qual_list struct_declarator_list ";" => {},
 };
 
 struct_declarator_list_inner: VecDeque<StructDeclarator> = {
@@ -337,9 +330,9 @@ struct_declarator_list: Box<[StructDeclarator]> = {
 };
 
 struct_declarator: StructDeclarator = {
-    declarator => ,
-    ":" constant_expression => ,
-    declarator ":" constant_expression => ,
+    declarator => StructDeclarator::Declarator(<>),
+    ":" ternary_expression => StructDeclarator::BitField(None, <>),
+    <d:declarator> ":" <e:ternary_expression> => StructDeclarator::BitField(Some(d), e),
 };
 
 enum_specifier: TySpec = {
@@ -365,7 +358,7 @@ enumerator_list: Box<[Enumerator]> = {
 
 enumerator: Enumerator = {
     "id" => Enumerator::new(<>, None),
-    <id:"id"> "=" <exp:conditional_expression> => Enumerator::new(id, Some(exp)),
+    <id:"id"> "=" <exp:ternary_expression> => Enumerator::new(id, Some(exp)),
 };
 
 declarator: Declarator = {
@@ -391,40 +384,39 @@ direct_declarator: DirDecl = {
 
 parameter_type_list: ParamList = {
     parameter_list =>
-        ParamList { params: <>, varargs: false, },
-    parameter_list "," "..." =>
-        ParamList { params: <>, varargs: true, },
+        ParamList { params: <>.1, varargs: <>.0, },
 };
 
-identifer_list_inner: VecDeque<IValue<String>> = {
+identifier_list_inner: VecDeque<IValue<String>> = {
     "id" => {
         let mut v = VecDeque::new();
         v.push(<>);
         v
     },
-    <id:"id"> "," <tail:identifer_list_inner> => {
+    <id:"id"> "," <tail:identifier_list_inner> => {
         let mut tail = tail;
         tail.push_front(id);
         tail
     },
 };
-identifer_list: Box<[IValue<String>]> = {
-    identifer_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice(),
+identifier_list: Box<[IValue<String>]> = {
+    identifier_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice(),
 };
 
-parameter_list_inner: VecDeque<ParamDeclaration> = {
+parameter_list_inner: (bool, VecDeque<ParamDeclaration>) = {
     parameter_declaration => {
         let mut v = VecDeque::new();
         v.push_front(<>);
-        v
+        (false, v)
     },
     <p:parameter_declaration> "," <tail:parameter_list_inner> => {
-        let mut t = tail;
+        let mut t = tail.1;
         t.push_front(p);
-        t
+        (tail.0. t)
     },
+    "..." => (true, VecDeque::new()),
 };
-parameter_list: Box<[ParamDeclaration]> = {
+parameter_list: (bool, Box<[ParamDeclaration]>) = {
     parameter_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice()
 };
 parameter_declaration: ParamDeclaration = {
@@ -437,6 +429,27 @@ initializer: Initializer = {
     assignment_expression => Initializer::Expr(assignment_expression),
     "{" initializer_list "}" => Initializer::Structure(initializer_list),
     "{" initializer_list "," "}" => Initializer::Structure(initializer_list),
+};
+
+init_declarator: InitDeclarator = {
+    declarator => InitDeclarator::new(<>, None),
+    <d:declarator> "=" <i:initializer> => InitDeclarator::new(d, i),
+};
+
+init_declarator_list_inner: VecDeque<InitDeclarator> = {
+    init_declarator => {
+        let mut v = VecDeque::new();
+        v.push_front(<>);
+        v
+    },
+    <p:init_declarator> "," <tail:init_declarator_list_inner> => {
+        let mut t = tail;
+        t.push_front(p);
+        t
+    },
+};
+init_declarator_list: Box<[Initializer]> = {
+    init_declarator_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice()
 };
 
 initializer_list_inner: VecDeque<Initializer> = {
@@ -457,7 +470,7 @@ initializer_list: Box<[Initializer]> = {
 
 statement: Statement = {
     labeled_statement => <>,
-    compount_statement => <>,
+    compound_statement => <>,
     expression_statement => <>,
     selection_statement => <>,
     iteration_statement => <>,
@@ -470,18 +483,42 @@ labeled_statement: Statement = {
     "default" ":" <s:statement> => ,
 };
 
-compount_statement: Statement = {
-    "{" "}" => ,
-    "{" statement_list "}" => ,
-    "{" declaration_list "}" => ,
-    "{" declaration_list statement_list "}" => ,
+compound_statement_inner: Box<[Statement]> = {
+    "{" "}" => => Box::new([]),
+    "{" declaration_statement_list "}" => <>,
+};
+compound_statement: Statement = {
+    compound_statement_inner => Statement::Compound(<>)
 };
 
-declaration: Declaraton = {
-
+declaration_statement: DeclOrStmnt = {
+    declaration => DeclOrStmnt::Decl(<>),
+    statement => DeclOrStmnt::Stmnt(<>),
+};
+declaration_statement_list_inner: VecDeque<DeclOrStmnt> = {
+    declaration_statement => {
+        let mut v = VecDeque::new();
+        v.push_front(<>);
+        v
+    },
+    <p:declaration_statement> "," <tail:declaration_list_inner> => {
+        let mut t = tail;
+        t.push_front(p);
+        t
+    },
+};
+declaration_statement_list: Box<[DeclOrStmnt]> = {
+    declaration_statement_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice()
 };
 
-declaration_list_inner: ? = {
+declaration: Declaration = {
+    declaration_specifiers ";" =>
+        Declaration::from_spec(<>, Box::new([])),
+    <spec:declaration_specifiers> <decls:init_declarator_list> ";" =>
+        Declaration::from_spec(spec, decls),
+};
+
+declaration_list_inner: VecDeque<Declaration> = {
     declaration => {
         let mut v = VecDeque::new();
         v.push_front(<>);
@@ -493,7 +530,7 @@ declaration_list_inner: ? = {
         t
     },
 };
-declaration_list: Box<[?]> = {
+declaration_list: Box<[Declaration]> = {
     declaration_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice()
 };
 
@@ -514,32 +551,39 @@ statement_list: Box<[Statement]> = {
 };
 
 expression_statement: Statement = {
-    ";" => ,
-    expresson ";" => ,
+    ";" => Statement::Nop,
+    expression ";" => Statement::Expr(<>),
 };
 
 selection_statement: Statement = {
-    "if" "(" <e:expression> ")" <s:statement> => ,
-    "if" "(" <e:expression> ")" <true_branch:statement> "else" <false_branch:statement> => ,
-    "switch" "(" <e:expression> ")" <s:statement> => ,
+    "if" "(" <e:expression> ")" <s:statement> =>
+        Statement::If(e, Box::new(s), None),
+    "if" "(" <e:expression> ")" <true_branch:statement> "else" <false_branch:statement> =>
+        Statement::If(e, Box::new(true_branch), Some(Box::new(false_branch))),
+    "switch" "(" <e:expression> ")" <s:statement> =>
+        Statement::Swtch(e, Box::new(s)),
 };
 
 iteration_statement: Statement = {
-    "while" "(" <e:expression> ")" <s:statement> => ,
-    "do" <s:statement> "while" "(" <e:expression> ")" ";" => ,
-    "for" "(" <decl:expression_statement> <cond:expression_statement> ")" <s:statement> => ,
-    "for" "(" <decl:expression_statement> <cond:expression_statement> <last:expression> ")" <s:statement> => ,
+    "while" "(" <e:expression> ")" <s:statement> =>
+        Statement::While(e, Box::new(s)),
+    "do" <s:statement> "while" "(" <e:expression> ")" ";" =>
+        Statement::DoWhile(s, e),
+    "for" "(" <init:expression_statement> <cond:expression_statement> ")" <s:statement> =>
+        Statement::For { init, cond, inc: None, body: Box::new(s) },
+    "for" "(" <init:expression_statement> <cond:expression_statement> <inc:expression> ")" <s:statement> =>
+        Statement::For { init, cond, inc: Some(inc), body: Box::new(s) },
 };
 
 jump_statement: Statement = {
-    "goto" <id:"id"> ";" => ,
-    "continue" ";" => ,
-    "break" ";" => ,
-    "return" ";" => ,
-    "return" <e:expression> ";" => ,
+    "goto" <id:"id"> ";" => Statement::Goto(id),
+    "continue" ";" => Statement::Continue,
+    "break" ";" => Statement::Break,
+    "return" ";" => Statement::Return(None),
+    "return" <e:expression> ";" => Statement::Return(Some(e)),
 };
 
-translation_unit_inner: VecDeque<?> = {
+translation_unit_inner: VecDeque<TranslationUnit> = {
     external_declaration => {
         let mut v = VecDeque::new();
         v.push_front(<>);
@@ -556,15 +600,19 @@ translation_unit: Box<[TranslationUnit]> = {
 };
 
 external_declaration: TranslationUnit = {
-    function_definition => ,
-    declaration => ,
+    function_definition => TranslationUnit::Fn(<>),
+    declaration => TranslationUnit::Decl(<>),
 };
 
-function_definition: ? = {
-    declaration_specifiers declarator declaration_list compount_statement => ,
-    declaration_specifiers declarator compount_statement => ,
-    declarator declaration_list compount_statement => ,
-    declarator compount_statement => ,
+function_definition: Function = {
+    <s:declaration_specifiers> <dec:declarator> <ts:declaration_list> <body:compound_statement_inner> =>
+        Function::new(s, dec, ts, body),
+    <s:declaration_specifiers> <dec:declarator> <body:compound_statement_inner> =>
+        Function::new(s, dec, Box::new([]), body),
+    <dec:declarator> <ts:declaration_list> <body:compound_statement_inner> =>
+        Function::new(DeclSpec::new(), dec, ts, body),
+    <dec:declarator> <body:compound_statement_inner> =>
+        Function::new(DeclSpec::new(), dec, Box::new([]), body),
 };
 
 storage_class_specifier: StorageClassSpec = {
@@ -575,7 +623,7 @@ storage_class_specifier: StorageClassSpec = {
     "auto" => StorageClassSpec::Auto,
 };
 
-declaration_specifiers: = {
+declaration_specifiers: DeclSpec = {
     storage_class_specifier =>
         DeclSpec::new().add_storage_class_spec(<>),
     <s:storage_class_specifier> <ds:declaration_specifiers> => 

@@ -1,10 +1,8 @@
-use crate::parse_tree::TaggedExpr;
-use declarator::Declarator;
-use crate::interner::IValue;
+use crate::parse_tree::*;
 
 pub enum StructDeclarator {
     Declarator(Declarator),
-    BitField(Option<Declarator>, usize),
+    BitField(Option<Declarator>, TaggedExpr),
 }
 
 pub struct StructDeclaration {

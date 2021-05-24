@@ -1,11 +1,9 @@
-use ty::*;
-use declarator::*;
-use abs_decl::*;
-use interner::IValue;
+use crate::interner::*;
+use crate::parse_tree::*;
 
 #[derive(Copy, Clone)]
 #[repr(i32)]
-pub StorageClassSpec {
+pub enum StorageClassSpec {
     Register  = 0b00001,
     Typedef   = 0b00010,
     Extern    = 0b00100,
@@ -56,39 +54,57 @@ impl DeclSpec {
 
 pub struct Declaration {
     pub ty: Ty,
+    pub storage_class: i32,
     pub declarators: Box<[InitDeclarator]>,
+}
+
+impl Declaration {
+    pub fn from_spec(spec: DeclSpec, declarators: Box<[InitDeclarator]>) -> Self {
+        Declaration {
+            ty: spec.get_type(),
+            storage_class: spec.storage_class,
+            declarators,
+        }
+    }
 }
 
 #[derive(Clone)]
 pub struct ParamDeclaration {
-    pub ty: Ty,
-    pub id: Option<IValue<String>>
+    pub ty: Option<Ty>,
+    pub id: Option<IValue<String>>,
     pub storage_class_specs: i32,
 }
 
 impl ParamDeclaration {
 
     pub fn from_id(id: IValue<String>) -> Self {
-        let ty = Ty::new(TyKind::Integral(IntegralTy::i32), false, false);
-        ParamDeclaration { ty, id, storage_class_specs: 0, }
+        let ty = None;
+        ParamDeclaration { ty, id: Some(id), storage_class_specs: 0, }
     }
 
     pub fn from_abs_decl(mut spec: DeclSpec, ad: AbsDecl) -> Self {
-        let ty = ad.wrap_type(spec.get_type());
+        let ty = Some(ad.wrap_type(spec.get_type()));
         let id = None;
         ParamDeclaration { ty, id, storage_class_specs: spec.storage_class, }
     }
 
     pub fn from_decl(mut spec: DeclSpec, decl: Declarator) -> Self {
-        let ty = decl.wrap_type(spec.get_type());
+        let ty = Some(decl.wrap_type(spec.get_type()));
         let id = Some(decl.get_id());
         ParamDeclaration { ty, id, storage_class_specs: spec.storage_class, }
     }
 
     pub fn from_spec(mut spec: DeclSpec) -> Self {
-        let ty = spec.get_type();
+        let ty = Some(spec.get_type());
         let id = None;
         ParamDeclaration { ty, id, storage_class_specs: spec.storage_class, }
+    }
+
+    pub fn get_type(&self) -> Ty {
+        match self.ty {
+            Some(t) => t.clone(),
+            None => Ty::new(TyKind::TBD, false, false),
+        }
     }
 
 }
@@ -101,5 +117,13 @@ pub struct ParamList {
 impl ParamList {
     pub fn new(params: Box<[ParamDeclaration]>, varargs: bool) -> Self {
         ParamList { params, varargs, }
+    }
+
+    pub fn get_types(&self) -> Box<[Ty]> {
+        self.params
+            .iter()
+            .map(|x| x.get_type())
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
     }
 }
