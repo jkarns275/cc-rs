@@ -20,8 +20,8 @@ pub enum TySpec {
     Short,
     Float,
     Double,
-    Structure(IValue<String>),
-    Enum(IValue<String>),
+    Structure(Structure),
+    Enumeration(Enumeration),
 }
 
 impl TySpec {
@@ -37,7 +37,7 @@ impl TySpec {
             TySpec::Float     => 5,
             TySpec::Double    => 6,
             TySpec::Structure(_) => 7,
-            TySpec::Enum(_) => 8,
+            TySpec::Enumeration(_) => 8,
         }
     }
 }
@@ -114,6 +114,10 @@ impl TySpecQualList {
             [Double]            => TyKind::Float(F64),
             [Long, Double]      => TyKind::Float(F80),
             [TySpec::Void]      => TyKind::Void,
+            [TySpec::Structure(s)]
+                                => TyKind::Structure(s),
+            [TySpec::Enumeration(e)]
+                                => TyKind::Enumeration(e),
             _                   => panic!("Unrecognized type, {:?} TODO: Add actual error handling.", &self.specs[..])
         }
     }
@@ -184,9 +188,9 @@ pub enum IntegralTy {
 
 impl IntegralTy {
 
-    pub fn pretty_print(self) -> String {
+    pub fn pretty_print(self, buf: &mut String) {
         use IntegralTy::*;
-        match self {
+        buf.push_str(match self {
             I64 => "long",
             U64 => "unsigned long",
             I32 => "int",
@@ -195,7 +199,7 @@ impl IntegralTy {
             U16 => "unsigned short",
             I8  => "char",
             U8  => "unsigned char",
-        }.to_string()
+        })
     }
 
 }
@@ -205,13 +209,13 @@ pub enum FloatTy { F80, F64, F32 }
 
 impl FloatTy {
 
-    pub fn pretty_print(self) -> String {
+    pub fn pretty_print(self, buf: &mut String) -> String {
         use FloatTy::*;
-        match self {
+        buf.push_str(match self {
             F80 => "long double",
             F64 => "double",
             F32 => "float",
-        }.to_string()
+        })
     }
 
 }
@@ -219,8 +223,8 @@ impl FloatTy {
 #[derive(Clone)]
 pub enum TyKind {
     Named(IValue<String>),
-    Struct(IValue<String>),
-    Union(IValue<String>),
+    Structure(Structure),
+    Enumeration(Enumeration),
     Ptr(Box<Ty>),
     Fn(Box<Ty>, Box<[Ty]>),
     Integral(IntegralTy),
@@ -232,27 +236,43 @@ pub enum TyKind {
 
 impl TyKind {
 
-    pub fn pretty_print(&self, str_interner: &Interner<String>) -> String {
+    pub fn pretty_print(&self, buf: &mut String, str_interner: &Interner<String>) {
         use TyKind::*;
         match &self {
-            Named(s) => str_interner.get(*s).clone(),
-            Struct(s) => format!("struct {}", str_interner.get(*s).clone()),
-            Union(s) => format!("union {}", str_interner.get(*s).clone()),
-            Ptr(p) => format!("pointer to{}", p.pretty_print(str_interner)),
-            Fn(ret_type, arg_tys) => {
-                let mut s = "function (".to_string();
-                for arg in arg_tys.iter() {
-                    s = format!("{}{}, ", s, arg.pretty_print(str_interner));
-                }
-                s = format!("{}) returning {}", s, ret_type.pretty_print(str_interner));
-                s
+            Named(s) => 
+                self.buf.push_str(str_interner.get(*s)),
+            Structure(s) =>
+                s.pretty_print(buf, str_interner),
+            Enumeration(e) => 
+                e.pretty_print(buf, str_interner),
+            Ptr(p) => {
+                buf.push_str("pointer to");
+                p.pretty_print(buf, str_interner);
             },
-            Integral(i) => i.pretty_print(),
-            Float(f) => f.pretty_print(),
-            Array(ty, Some(size_expr)) => format!("array {} of {}", size_expr.pretty_print(), ty.pretty_print(str_interner)),
-            Array(ty, None) => format!("array of {}", ty.pretty_print(str_interner)),
-            Void => "void".to_string(),
-            _ => String::new()
+            Fn(ret_type, arg_tys) => {
+                buf.push_str("function (");
+                for arg in arg_tys.iter() {
+                    arg.pretty_print(buf, str_interner);
+                    buf.push_str(", ");
+                }
+                if args.len() != 0 { buf.pop(); buf.pop(); }
+                buf.push_str(") returning ");
+                ret_type.pretty_print(buf, str_interner)
+            },
+            Integral(i) => i.pretty_print(buf),
+            Float(f) => f.pretty_print(buf),
+            Array(ty, Some(size_expr)) => {
+                buf.push_str("array ");
+                size_expr.pretty_print(buf, str_interner);
+                buf.push_str(" of ");
+                ty.pretty_print(buf, str_interner);
+            },
+            Array(ty, None) => {
+                buf.push_str("array of ");
+                ty.pretty_print(buf, str_interner);
+            },
+            Void => buf.push_str("void"),
+            _ => buf.push_str("ICE"),
         }
     }
 
@@ -270,14 +290,13 @@ impl Ty {
         Ty { kind, volatile, constant, }
     }
 
-    pub fn pretty_print(&self, str_interner: &Interner<String>) -> String {
-        let mut s = String::new();
+    pub fn pretty_print(&self, buf: &mut String str_interner: &Interner<String>) {
         if self.volatile {
-            s += "volatile ";
+            buf.push_str("volatile ");
         }
         if self.constant {
-            s += "constant ";
+            buf.push_str("constant ");
         }
-        format!("{} {}", s, self.kind.pretty_print(str_interner))
+        self.kind.pretty_print(buf, str_interner);
     }
 }
