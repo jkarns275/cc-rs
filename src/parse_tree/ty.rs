@@ -1,14 +1,10 @@
 use std::cmp::Ordering;
+use std::fmt;
+
 use crate::interner::*;
 use crate::parse_tree::*;
 
-#[derive(Copy, Clone, PartialOrd, Ord, Eq, PartialEq, Debug)]
-pub enum StructType {
-    Struct,
-    Union
-}
-
-#[derive(Clone, Eq, PartialEq, Debug)]
+#[derive(Clone)]
 #[repr(i32)]
 pub enum TySpec {
     Unsigned,
@@ -41,6 +37,32 @@ impl TySpec {
         }
     }
 }
+
+impl fmt::Debug for TySpec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            TySpec::Unsigned  => "unsigned",
+            TySpec::Signed    => "signed",
+            TySpec::Long      => "long",
+            TySpec::Int       => "int",
+            TySpec::Void      => "void",
+            TySpec::Char      => "char",
+            TySpec::Short     => "short",
+            TySpec::Float     => "float",
+            TySpec::Double    => "double",
+            TySpec::Structure(_) => "struct { ... }",
+            TySpec::Enumeration(_) => "enum { ... }",
+        })
+    }
+}
+
+impl PartialEq for TySpec {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_i32() == other.as_i32()
+    }
+}
+
+impl Eq for TySpec {}
 
 impl Ord for TySpec {
     fn cmp(&self, other: &Self) -> Ordering {
@@ -93,8 +115,7 @@ impl TySpecQualList {
         use FloatTy::*;
         use IntegralTy::*;
 
-        self.specs.retain(|&x| x != Signed);
-        self.specs.retain(|&x| x != Int);
+        self.specs.retain(|x| match x { Int | Signed => false, _ => true });
         self.specs.sort_unstable();
 
         // https://en.wikipedia.org/wiki/C_data_types
@@ -115,9 +136,9 @@ impl TySpecQualList {
             [Long, Double]      => TyKind::Float(F80),
             [TySpec::Void]      => TyKind::Void,
             [TySpec::Structure(s)]
-                                => TyKind::Structure(s),
+                                => TyKind::Structure(s.clone()),
             [TySpec::Enumeration(e)]
-                                => TyKind::Enumeration(e),
+                                => TyKind::Enumeration(e.clone()),
             _                   => panic!("Unrecognized type, {:?} TODO: Add actual error handling.", &self.specs[..])
         }
     }
@@ -138,6 +159,21 @@ impl TySpecQualList {
     pub fn add_spec(mut self, s: TySpec) -> Self {
         self.specs.push(s);
         self
+    }
+
+    pub fn pretty_print(&self, buf: &mut String, si: &Interner<String>) {
+        let volatile = TyQual::is_volatile(self.quals);
+        let constant = TyQual::is_const(self.quals);
+
+        if volatile {
+            buf.push_str("volatile ");
+        }
+        if constant {
+            buf.push_str("constant ");
+        }
+
+        let ty = self.clone().into_type();
+        ty.pretty_print(buf, si);
     }
 }
 
@@ -171,6 +207,28 @@ impl PtrTy {
     pub fn push(mut self, i: i32) -> Self {
         self.0.push(i);
         self
+    }
+
+    pub fn pretty_print(&self, buf: &mut String, si: &Interner<String>) {
+        if self.0.len() == 0 {
+            ()
+        } else {
+            // C pointer types are in reverse order
+            // e.g. char * * volatile is a volatile pointer to a pointer to a char
+            //      char * volatile * is a pointer to a volatile pointer to a char.
+            // But the order that the parser reads them in should be reversed...
+            for &x in self.0.iter() {
+                let volatile = TyQual::is_volatile(x);
+                let constant = TyQual::is_const(x);
+                if volatile {
+                    buf.push_str("volatile ");
+                }
+                if constant {
+                    buf.push_str("constant ");
+                }
+                buf.push('*');
+            }
+        }
     }
 }
 
@@ -209,13 +267,13 @@ pub enum FloatTy { F80, F64, F32 }
 
 impl FloatTy {
 
-    pub fn pretty_print(self, buf: &mut String) -> String {
+    pub fn pretty_print(self, buf: &mut String) {
         use FloatTy::*;
         buf.push_str(match self {
             F80 => "long double",
             F64 => "double",
             F32 => "float",
-        })
+        });
     }
 
 }
@@ -240,7 +298,7 @@ impl TyKind {
         use TyKind::*;
         match &self {
             Named(s) => 
-                self.buf.push_str(str_interner.get(*s)),
+                buf.push_str(str_interner.get(*s)),
             Structure(s) =>
                 s.pretty_print(buf, str_interner),
             Enumeration(e) => 
@@ -255,7 +313,7 @@ impl TyKind {
                     arg.pretty_print(buf, str_interner);
                     buf.push_str(", ");
                 }
-                if args.len() != 0 { buf.pop(); buf.pop(); }
+                if arg_tys.len() != 0 { buf.pop(); buf.pop(); }
                 buf.push_str(") returning ");
                 ret_type.pretty_print(buf, str_interner)
             },
@@ -290,13 +348,13 @@ impl Ty {
         Ty { kind, volatile, constant, }
     }
 
-    pub fn pretty_print(&self, buf: &mut String str_interner: &Interner<String>) {
+    pub fn pretty_print(&self, buf: &mut String, si: &Interner<String>) {
         if self.volatile {
             buf.push_str("volatile ");
         }
         if self.constant {
             buf.push_str("constant ");
         }
-        self.kind.pretty_print(buf, str_interner);
+        self.kind.pretty_print(buf, si);
     }
 }

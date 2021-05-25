@@ -39,6 +39,7 @@ pub enum UnaryOp {
 
 impl UnaryOp {
     pub fn is_pre(self) -> bool {
+        use UnaryOp::*;
         match self {
             IncPost => false,
             DecPost => false,
@@ -46,6 +47,7 @@ impl UnaryOp {
         }
     }
     pub fn pretty_print(self, buf: &mut String) {
+        use UnaryOp::*;
         buf.push_str(
             match self {
                Lea => "&",
@@ -81,6 +83,7 @@ pub enum BinOp {
 
 impl BinOp {
     pub fn pretty_print(self, buf: &mut String) {
+        use BinOp::*;
         buf.push_str(
             match self {
                 Mul => "*",
@@ -139,6 +142,7 @@ pub enum Expr {
 
 impl Expr {
     pub fn pretty_print(&self, buf: &mut String, si: &Interner<String>) {
+        use Expr::*;
         buf.push('(');
         match self {
             Index { base, offset, } => {
@@ -166,7 +170,7 @@ impl Expr {
             },
             Arrow { expr, field, } => {
                 expr.pretty_print(buf, si);
-                buf.push('->');
+                buf.push_str("->");
                 buf.push_str(si.get(*field).as_str());
             },
             UnaryOp { expr, unop, } => {
@@ -238,7 +242,7 @@ impl Expr {
                 );
             },
             Id(id) => {
-                buf.push_str(f.to_string().as_str());
+                buf.push_str(si.get(*id));
             },
         };
         buf.push(')');

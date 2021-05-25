@@ -13,7 +13,7 @@ Tagged<E>: TaggedExpr =
         TaggedExpr::new(rule, l, r);
 
 pub primary_expression_inner: Expr = {
-    "id" => Expr::Id(str_interner.intern::<str>(<>)),
+    id => Expr::Id(<>),
     "int literal" => Expr::IntConst(<>.0, <>.1),
     "float literal" => Expr::FloatConst(<>.0, <>.1),
     "string literal" => Expr::StringConst(byte_interner.intern(&<>)),
@@ -21,13 +21,17 @@ pub primary_expression_inner: Expr = {
 };
 primary_expression: TaggedExpr = Tagged<primary_expression_inner>;
 
+id: IValue<String> ={
+    "id" => str_interner.intern::<str>(<>),
+};
+
 postfix_expression_inner: Expr = {
     primary_expression_inner => <>,
     <base:postfix_expression> "[" <offset:expression> "]" => Expr::Index { base, offset, },
     <fun:postfix_expression> "(" ")" => Expr::Call { fun, args: vec![].into_boxed_slice(), },
     <fun:postfix_expression> "(" <args:argument_expression_list> ")" => Expr::Call { fun, args, },
-    <expr:postfix_expression> "." <id:"id"> => Expr::Dot { expr, field: str_interner.intern::<str>(id) },
-    <expr:postfix_expression> "->" <id:"id"> => Expr::Arrow { expr, field: str_interner.intern::<str>(id) },
+    <expr:postfix_expression> "." <id:id> => Expr::Dot { expr, field: id },
+    <expr:postfix_expression> "->" <id:id> => Expr::Arrow { expr, field: id },
     <expr:postfix_expression> "++" => Expr::UnaryOp { expr, unop: UnaryOp::IncPost },
     <expr:postfix_expression> "--" => Expr::UnaryOp { expr, unop: UnaryOp::DecPost },
 };
@@ -265,7 +269,7 @@ type_specifier: TySpec = {
     "float" => TySpec::Float,
     "double" => TySpec::Double,
     struct_or_union_specifier => TySpec::Structure(<>),
-    enum_specifier => TySpec::Enum(<>),
+    enum_specifier => TySpec::Enumeration(<>),
 };
 
 type_name: Ty = {
@@ -280,25 +284,25 @@ pub type_name_program: Ty = {
 };
 
 struct_or_union_specifier: Structure = {
-    <s:struct_or_union> <id:"id"> "{" <decls:struct_declaration_list> "}" =>
-        Structure::new(s, Some(str_interner.intern::<str>(id)), decls),
+    <s:struct_or_union> <id:id> "{" <decls:struct_declaration_list> "}" =>
+        Structure::new(s, Some(id), decls),
     <s:struct_or_union> "{" <decls:struct_declaration_list> "}" =>
         Structure::new(s, None, decls),
-    <s:struct_or_union> <id:"id"> =>
-        Structure::new(s, Some(str_interner.intern::<str>(id)), Box::new([])),
+    <s:struct_or_union> <id:id> =>
+        Structure::new(s, Some(id), Box::new([])),
 };
 
-struct_or_union: StructType = {
-    "struct" => StructType::Struct,
-    "union" => StructType::Union,
+struct_or_union: StructureType = {
+    "struct" => StructureType::Struct,
+    "union" => StructureType::Union,
 };
 
-struct_declaration_list_inner: VecDeque<StructDeclarator> = {
+struct_declaration_list_inner: VecDeque<StructDeclaration> = {
     struct_declaration => {
         let mut decls = VecDeque::new();
         decls.push_front(<>);
         decls
-    }
+    },
     <d:struct_declaration> <decls:struct_declaration_list_inner> => {
         let mut decls = decls;
         decls.push_front(d);
@@ -306,12 +310,15 @@ struct_declaration_list_inner: VecDeque<StructDeclarator> = {
     }
 };
 
-struct_declaration_list: Box<[StructDeclarator]> = {
+struct_declaration_list: Box<[StructDeclaration]> = {
     struct_declaration_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice()
 };
 
-struct_declaration: StructDeclarator = {
-    spec_qual_list struct_declarator_list ";" => {},
+struct_declaration: StructDeclaration = {
+    <sql:spec_qual_list> <sdl:struct_declarator_list> ";" => {
+        let mut sql = sql;
+        StructDeclaration::new(sql.get_type(), sdl)
+    },
 };
 
 struct_declarator_list_inner: VecDeque<StructDeclarator> = {
@@ -319,7 +326,7 @@ struct_declarator_list_inner: VecDeque<StructDeclarator> = {
         let mut decls = VecDeque::new();
         decls.push_front(<>);
         decls
-    }
+    },
     <d:struct_declarator> "," <decls:struct_declarator_list_inner> => {
         let mut decls = decls;
         decls.push_front(d);
@@ -327,22 +334,22 @@ struct_declarator_list_inner: VecDeque<StructDeclarator> = {
     }
 };
 struct_declarator_list: Box<[StructDeclarator]> = {
-    enumerator_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice() 
+    struct_declarator_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice() 
 };
 
 struct_declarator: StructDeclarator = {
     declarator => StructDeclarator::Declarator(<>),
-    ":" ternary_expression => StructDeclarator::BitField(None, <>),
+    ":" <e:ternary_expression> => StructDeclarator::BitField(None, e),
     <d:declarator> ":" <e:ternary_expression> => StructDeclarator::BitField(Some(d), e),
 };
 
-enum_specifier: TySpec = {
+enum_specifier: Enumeration = {
     "enum" "{" <e:enumerator_list> "}" =>
         Enumeration::new(None, e),
-    "enum" <id:"id"> "{" <e:enumerator_list> "}" =>
-        Enumeration::new(Some(str_interner.intern::<str>(id)), e),
-    "enum" <id:"id"> =>
-        Enumeration::new,
+    "enum" <id:id> "{" <e:enumerator_list> "}" =>
+        Enumeration::new(Some(id), e),
+    "enum" <id:id> =>
+        Enumeration::new(Some(id), Box::new([])),
 };
 
 enumerator_list_inner: VecDeque<Enumerator> = {
@@ -351,8 +358,10 @@ enumerator_list_inner: VecDeque<Enumerator> = {
         e.push_front(<>);
         e
     },
-    enumerator "," enumerator_list_inner => {
-
+    <e:enumerator> "," <es:enumerator_list_inner> => {
+        let mut es = es;
+        es.push_front(e);
+        es
     },
 };
 enumerator_list: Box<[Enumerator]> = {
@@ -360,17 +369,17 @@ enumerator_list: Box<[Enumerator]> = {
 };
 
 enumerator: Enumerator = {
-    "id" => Enumerator::new(<>, None),
-    <id:"id"> "=" <exp:ternary_expression> => Enumerator::new(id, Some(exp)),
+    id => Enumerator::new(<>, None),
+    <id:id> "=" <exp:ternary_expression> => Enumerator::new(id, Some(exp)),
 };
 
 declarator: Declarator = {
-    direct_declarator => Declarator::Direct(<>),
-    <p:pointer> <d:direct_declarator> => Declarator::PtrTo(p, d),
+    direct_declarator => Declarator::new(DeclaratorKind::Direct(<>)),
+    <p:pointer> <d:direct_declarator> => Declarator::new(DeclaratorKind::PtrTo(p, d)),
 };
 
 direct_declarator: DirDecl = {
-    "id" => DirDecl::Id(<>),
+    id => DirDecl::Id(<>),
     "(" <ad:declarator> ")" =>
         DirDecl::Declarator(Box::new(ad)),
     <d:direct_declarator> "[" "]" =>
@@ -380,7 +389,7 @@ direct_declarator: DirDecl = {
     <d:direct_declarator> "(" <params:parameter_type_list> ")" => 
         DirDecl::Fn(Box::new(d), params),
     <d:direct_declarator> "(" ")" => 
-        DirDecl::Fn(Box::new(d), Box::new([])),
+        DirDecl::Fn(Box::new(d), ParamList::new(Box::new([]), false)),
     <d:direct_declarator> "(" <params:identifier_list> ")" => 
         DirDecl::id_fn(d, params),
 };
@@ -391,12 +400,12 @@ parameter_type_list: ParamList = {
 };
 
 identifier_list_inner: VecDeque<IValue<String>> = {
-    "id" => {
+    id => {
         let mut v = VecDeque::new();
-        v.push(<>);
+        v.push_front(<>);
         v
     },
-    <id:"id"> "," <tail:identifier_list_inner> => {
+    <id:id> "," <tail:identifier_list_inner> => {
         let mut tail = tail;
         tail.push_front(id);
         tail
@@ -415,12 +424,12 @@ parameter_list_inner: (bool, VecDeque<ParamDeclaration>) = {
     <p:parameter_declaration> "," <tail:parameter_list_inner> => {
         let mut t = tail.1;
         t.push_front(p);
-        (tail.0. t)
+        (tail.0, t)
     },
     "..." => (true, VecDeque::new()),
 };
 parameter_list: (bool, Box<[ParamDeclaration]>) = {
-    parameter_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice()
+    parameter_list_inner => (<>.0, <Vec<_> as From<VecDeque<_>>>::from(<>.1).into_boxed_slice())
 };
 parameter_declaration: ParamDeclaration = {
     <spec:declaration_specifiers> <d:declarator> => ParamDeclaration::from_decl(spec, d),
@@ -429,14 +438,13 @@ parameter_declaration: ParamDeclaration = {
 };
 
 initializer: Initializer = {
-    assignment_expression => Initializer::Expr(assignment_expression),
-    "{" initializer_list "}" => Initializer::Structure(initializer_list),
-    "{" initializer_list "," "}" => Initializer::Structure(initializer_list),
+    assignment_expression => Initializer::Expr(<>),
+    "{" <il:initializer_list> "}" => Initializer::Structure(il),
 };
 
 init_declarator: InitDeclarator = {
     declarator => InitDeclarator::new(<>, None),
-    <d:declarator> "=" <i:initializer> => InitDeclarator::new(d, i),
+    <d:declarator> "=" <i:initializer> => InitDeclarator::new(d, Some(i)),
 };
 
 init_declarator_list_inner: VecDeque<InitDeclarator> = {
@@ -456,6 +464,11 @@ init_declarator_list: Box<[InitDeclarator]> = {
 };
 
 initializer_list_inner: VecDeque<Initializer> = {
+    <i:initializer> "," => {
+        let mut v = VecDeque::new();
+        v.push_front(i);
+        v
+    },
     initializer => {
         let mut v = VecDeque::new();
         v.push_front(<>);
@@ -471,49 +484,6 @@ initializer_list: Box<[Initializer]> = {
     initializer_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice()
 };
 
-statement: Statement = {
-    labeled_statement => <>,
-    compound_statement => <>,
-    expression_statement => <>,
-    selection_statement => <>,
-    iteration_statement => <>,
-    jump_statement => <>,
-};
-
-labeled_statement: Statement = {
-    <id:"id"> ":" <s:statement> => ,
-    "case" <exp:ternary_expression> ":" <s:statement> => ,
-    "default" ":" <s:statement> => ,
-};
-
-compound_statement_inner: Box<[DeclOrStmnt]> = {
-    "{" "}" => => Box::new([]),
-    "{" declaration_statement_list "}" => <>,
-};
-compound_statement: Statement = {
-    compound_statement_inner => Statement::Compound(<>)
-};
-
-declaration_statement: DeclOrStmnt = {
-    declaration => DeclOrStmnt::Decl(<>),
-    statement => DeclOrStmnt::Stmnt(<>),
-};
-declaration_statement_list_inner: VecDeque<DeclOrStmnt> = {
-    declaration_statement => {
-        let mut v = VecDeque::new();
-        v.push_front(<>);
-        v
-    },
-    <p:declaration_statement> "," <tail:declaration_statement_list_inner> => {
-        let mut t = tail;
-        t.push_front(p);
-        t
-    },
-};
-declaration_statement_list: Box<[DeclOrStmnt]> = {
-    declaration_statement_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice()
-};
-
 declaration: Declaration = {
     <d:declaration_specifiers> ";" =>
         Declaration::from_spec(d, Box::new([])),
@@ -527,7 +497,7 @@ declaration_list_inner: VecDeque<Declaration> = {
         v.push_front(<>);
         v
     },
-    <p:declaration> "," <tail:declaration_list_inner> => {
+    <p:declaration> <tail:declaration_list_inner> => {
         let mut t = tail;
         t.push_front(p);
         t
@@ -560,36 +530,98 @@ expression_statement: Statement = {
 
 for_expression_statement: TaggedExpr = {
     <l: @L> ";" <r: @R> => TaggedExpr::new(Expr::IntConst(1, IntType::Long), l, r),
-    expression ";" => <>,
+    <x:expression> ";" => x,
 };
-selection_statement: Statement = {
-    "if" "(" <e:expression> ")" <s:statement> =>
+
+statement: Statement = {
+    open_statement => <>,
+    closed_statement => <>,
+};
+
+open_statement: Statement = {
+    "if" "(" <e:expression> ")" <s:other_statement> =>
         Statement::If(e, Box::new(s), None),
-    "if" "(" <e:expression> ")" <true_branch:statement> "else" <false_branch:statement> =>
+    "if" "(" <e:expression> ")" <s:open_statement> =>
+        Statement::If(e, Box::new(s), None),
+    "if" "(" <e:expression> ")" <true_branch:closed_statement> "else" <false_branch:open_statement> =>
         Statement::If(e, Box::new(true_branch), Some(Box::new(false_branch))),
-    "switch" "(" <e:expression> ")" <s:statement> =>
+};
+
+closed_statement: Statement = {
+    "if" "(" <e:expression> ")" <true_branch:closed_statement> "else" <false_branch:closed_statement> =>
+        Statement::If(e, Box::new(true_branch), Some(Box::new(false_branch))),
+    other_statement => <>,
+};
+
+other_statement: Statement = {
+    labeled_statement => <>,
+    compound_statement => <>,
+    expression_statement => <>,
+    switch_statement => <>,
+    iteration_statement => <>,
+    jump_statement => <>,
+};
+
+switch_statement: Statement = {
+    "switch" "(" <e:expression> ")" <s:closed_statement> =>
         Statement::Switch(e, Box::new(s)),
 };
 
 iteration_statement: Statement = {
-    "while" "(" <e:expression> ")" <s:statement> =>
+    "while" "(" <e:expression> ")" <s:closed_statement> =>
         Statement::While(e, Box::new(s)),
     "do" <s:statement> "while" "(" <e:expression> ")" ";" =>
         Statement::DoWhile(Box::new(s), e),
-    "for" "(" <init:for_expression_statement> <cond:for_expression_statement> ")" <s:statement> =>
+    "for" "(" <init:for_expression_statement> <cond:for_expression_statement> ")" <s:closed_statement> =>
         Statement::For { init, cond, inc: None, body: Box::new(s) },
-    "for" "(" <init:for_expression_statement> <cond:for_expression_statement> <inc:expression> ")" <s:statement> =>
+    "for" "(" <init:for_expression_statement> <cond:for_expression_statement> <inc:expression> ")" <s:closed_statement> =>
         Statement::For { init, cond, inc: Some(inc), body: Box::new(s) },
 };
 
 jump_statement: Statement = {
-    "goto" <id:"id"> ";" => Statement::Goto(str_interner.intern::<str>(<>)),
+    "goto" <id:id> ";" => Statement::Goto(<>),
     "continue" ";" => Statement::Continue,
     "break" ";" => Statement::Break,
     "return" ";" => Statement::Return(None),
     "return" <e:expression> ";" => Statement::Return(Some(e)),
 };
 
+labeled_statement: Statement = {
+    <id:id> ":" <s:closed_statement> =>
+        Statement::Labeled(id, Box::new(s)),
+    "case" <exp:ternary_expression> ":" <s:closed_statement> => 
+        Statement::Case(exp, Box::new(s)),
+    "default" ":" <s:closed_statement> => 
+        Statement::Default,
+};
+
+compound_statement_inner: Box<[DeclOrStmnt]> = {
+    "{" "}" => Box::new([]),
+    "{" <x:declaration_statement_list> "}" => x,
+};
+compound_statement: Statement = {
+    compound_statement_inner => Statement::Compound(<>)
+};
+
+declaration_statement: DeclOrStmnt = {
+    declaration => DeclOrStmnt::Decl(<>),
+    statement => DeclOrStmnt::Stmnt(<>),
+};
+declaration_statement_list_inner: VecDeque<DeclOrStmnt> = {
+    declaration_statement => {
+        let mut v = VecDeque::new();
+        v.push_front(<>);
+        v
+    },
+    <p:declaration_statement> "," <tail:declaration_statement_list_inner> => {
+        let mut t = tail;
+        t.push_front(p);
+        t
+    },
+};
+declaration_statement_list: Box<[DeclOrStmnt]> = {
+    declaration_statement_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice()
+};
 translation_unit_inner: VecDeque<TranslationUnit> = {
     external_declaration => {
         let mut v = VecDeque::new();
@@ -605,7 +637,9 @@ translation_unit_inner: VecDeque<TranslationUnit> = {
 translation_unit: Box<[TranslationUnit]> = {
     translation_unit_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice()
 };
-
+pub translation_unit_program: Box<[TranslationUnit]> = {
+    <i:translation_unit_inner> "eof" => <Vec<_> as From<VecDeque<_>>>::from(i).into_boxed_slice()
+};
 external_declaration: TranslationUnit = {
     function_definition => TranslationUnit::Fn(<>),
     declaration => TranslationUnit::Decl(<>),

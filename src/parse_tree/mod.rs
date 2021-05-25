@@ -25,3 +25,11 @@ pub enum TranslationUnit {
     Decl(Declaration),
 }
 
+impl TranslationUnit {
+    pub fn pretty_print(&self, buf: &mut String, si: &Interner<String>) {
+        match self {
+            TranslationUnit::Fn(f) => f.pretty_print(buf, si),
+            TranslationUnit::Decl(d) => d.pretty_print(buf, si),
+        }
+    }
+}

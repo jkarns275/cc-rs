@@ -12,6 +12,24 @@ pub enum StorageClassSpec {
     None      = 0b00000,
 }
 
+impl StorageClassSpec {
+    pub fn pretty_print(spec: i32, buf: &mut String) {
+        use StorageClassSpec::*;
+        const strs: &'static [&'static str] = &["register", "typedef", "extern", "static", "auto", "none"];
+        const v: [StorageClassSpec; 6] = [Register, Typedef, Extern, Static, Auto, None];
+        for i in 0..strs.len() {
+            let e = v[i];
+            if e as i32 & spec != 0 {
+                buf.push_str(strs[i]);
+                buf.push(' ');
+            }
+        }
+        if spec != 0 {
+            buf.pop();
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct DeclSpec {
     pub storage_class: i32,
@@ -50,6 +68,11 @@ impl DeclSpec {
         self
     }
 
+    pub fn pretty_print(&self, buf: &mut String, si: &Interner<String>) {
+        StorageClassSpec::pretty_print(self.storage_class, buf);
+        if self.storage_class != 0 { buf.push(' '); }
+        self.spec_qual_list.pretty_print(buf, si);
+    }
 }
 
 pub struct Declaration {
@@ -59,11 +82,25 @@ pub struct Declaration {
 }
 
 impl Declaration {
-    pub fn from_spec(spec: DeclSpec, declarators: Box<[InitDeclarator]>) -> Self {
+    pub fn from_spec(mut spec: DeclSpec, declarators: Box<[InitDeclarator]>) -> Self {
         Declaration {
             ty: spec.get_type(),
             storage_class: spec.storage_class,
             declarators,
+        }
+    }
+
+    pub fn pretty_print(&self, buf: &mut String, si: &Interner<String>) {
+        StorageClassSpec::pretty_print(self.storage_class, buf);
+        self.ty.pretty_print(buf, si);
+        if self.declarators.len() > 0 {
+            buf.push(' ');
+            for d in self.declarators.iter() {
+                buf.push_str("\n        ");
+                d.pretty_print(buf, si);
+                buf.push(',');
+            }
+            buf.pop();
         }
     }
 }
@@ -101,14 +138,25 @@ impl ParamDeclaration {
     }
 
     pub fn get_type(&self) -> Ty {
-        match self.ty {
+        match &self.ty {
             Some(t) => t.clone(),
             None => Ty::new(TyKind::TBD, false, false),
         }
     }
 
+    pub fn pretty_print(&self, buf: &mut String, si: &Interner<String>) {
+        StorageClassSpec::pretty_print(self.storage_class_specs, buf);
+        if let Some(t) = &self.ty {
+            t.pretty_print(buf, si);
+            if self.id.is_some() { buf.push(' '); }
+        }
+        if let Some(id) = self.id {
+            buf.push_str(si.get(id));
+        }
+    }
 }
 
+#[derive(Clone)]
 pub struct ParamList {
     pub params: Box<[ParamDeclaration]>,
     pub varargs: bool,
@@ -125,5 +173,17 @@ impl ParamList {
             .map(|x| x.get_type())
             .collect::<Vec<_>>()
             .into_boxed_slice()
+    }
+
+    pub fn pretty_print(&self, buf: &mut String, si: &Interner<String>) {
+        for p in self.params.iter() {
+            p.pretty_print(buf, si);
+            buf.push_str(", ");
+        }
+        if self.varargs {
+            buf.push_str("...");
+        } else if self.params.len() > 0 {
+            buf.pop(); buf.pop();
+        }
     }
 }
