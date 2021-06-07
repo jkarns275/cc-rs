@@ -5,12 +5,29 @@ use crate::interner::*;
 use std::borrow::Borrow;
 use std::collections::VecDeque;
 use crate::parse_tree::*;
-
-grammar<'input>(src: &'input str, str_interner: &mut Interner<String>, byte_interner: &mut Interner<Box<[u8]>>);
+use std::rc::Rc;
+use std::cell::RefCell;
+grammar<'input>(
+    src: &'input str, 
+    str_interner: &mut Interner<String>, 
+    byte_interner: &mut Interner<Box<[u8]>>,
+    typedef_environment: &mut Rc<RefCell<TypeDefEnv>>);
 
 Tagged<E>: TaggedExpr =
     <l: @L> <rule: E> <r: @R> =>
         TaggedExpr::new(rule, l, r);
+
+env_push: () = {
+    => {
+        (*typedef_environment.borrow_mut()).ids.push_frame();
+    },
+};
+
+env_pop: () = {
+    => {
+        (*typedef_environment.borrow_mut()).ids.pop_frame();
+    },
+};
 
 pub primary_expression_inner: Expr = {
     id => Expr::Id(<>),
@@ -24,6 +41,9 @@ primary_expression: TaggedExpr = Tagged<primary_expression_inner>;
 id: IValue<String> ={
     "id" => str_interner.intern::<str>(<>),
 };
+type_id: IValue<String> = {
+    "type name" => str_interner.intern::<str>(<>),
+}
 
 postfix_expression_inner: Expr = {
     primary_expression_inner => <>,
@@ -187,16 +207,8 @@ expression_inner: Expr = {
 };
 expression: TaggedExpr = Tagged<expression_inner>;
 
-spec_qual_list: TySpecQualList = {
-    <spec:type_specifier> <l:spec_qual_list> => {
-        let mut l = l;
-        l.add_spec(spec)
-    },
-    <spec:type_specifier> => {
-        let mut l = TySpecQualList::new();
-        l.add_spec(spec)
-    },
-    <qual:type_qualifier> <l:spec_qual_list> => {
+qual_list: TySpecQualList = {
+    <qual:type_qualifier> <l:qual_list> => {
         let mut l = l;
         l.add_qual(qual)
     },
@@ -205,6 +217,43 @@ spec_qual_list: TySpecQualList = {
         l.add_qual(qual)
     }
 };
+
+// Only contains a single name
+named_spec_qual_list: TySpecQualList = {
+    <l:qual_list> <id:type_id> <r:qual_list> => {
+        TySpecQualList::merge(l.add_spec(TySpec::Named(id)), r)
+    },
+    <l:qual_list> <id:type_id> => {
+        l.add_spec(TySpec::Named(id))
+    },
+    <id:id> <r:qual_list> => {
+        r.add_spec(TySpec::Named(id))
+    }
+};
+
+spec_qual_list_inner: TySpecQualList = {
+    <spec:type_specifier> <l:spec_qual_list_inner> => {
+        let mut l = l;
+        l.add_spec(spec)
+    },
+    <spec:type_specifier> => {
+        let mut l = TySpecQualList::new();
+        l.add_spec(spec)
+    },
+    <qual:type_qualifier> <l:spec_qual_list_inner> => {
+        let mut l = l;
+        l.add_qual(qual)
+    },
+    <qual:type_qualifier> => {
+        let mut l = TySpecQualList::new();
+        l.add_qual(qual)
+    },
+};
+
+spec_qual_list: TySpecQualList = {
+    spec_qual_list_inner => <>,
+    named_spec_qual_list => <>
+}
 
 ptr_inner: i32 = {
     "*" => 0,
@@ -288,6 +337,8 @@ struct_or_union_specifier: Structure = {
         Structure::new(s, Some(id), decls),
     <s:struct_or_union> "{" <decls:struct_declaration_list> "}" =>
         Structure::new(s, None, decls),
+    <s:struct_or_union> <id:id?> "{" "}" =>
+        Structure::new(s, id, Box::new([])),
     <s:struct_or_union> <id:id> =>
         Structure::new(s, Some(id), Box::new([])),
 };
@@ -389,33 +440,38 @@ direct_declarator: DirDecl = {
     <d:direct_declarator> "(" <params:parameter_type_list> ")" => 
         DirDecl::Fn(Box::new(d), params),
     <d:direct_declarator> "(" ")" => 
-        DirDecl::Fn(Box::new(d), ParamList::new(Box::new([]), false)),
-    <d:direct_declarator> "(" <params:identifier_list> ")" => 
-        DirDecl::id_fn(d, params),
+        DirDecl::Fn(Box::new(d), ParamList::empty()),
+    // <d:direct_declarator> "(" <params:identifier_list> ")" => 
+    //    DirDecl::Fn(Box::new(d), params),
 };
 
 parameter_type_list: ParamList = {
-    parameter_list =>
-        ParamList { params: <>.1, varargs: <>.0, },
+    parameter_list => <>
 };
 
-identifier_list_inner: VecDeque<IValue<String>> = {
+identifier_list_inner: VecDeque<NamedParam> = {
     id => {
         let mut v = VecDeque::new();
-        v.push_front(<>);
+        let i = NamedParam::from_id(<>);
+        v.push_front(i);
         v
     },
     <id:id> "," <tail:identifier_list_inner> => {
         let mut tail = tail;
-        tail.push_front(id);
+        let i = NamedParam::from_id(id);
+        tail.push_front(i);
         tail
     },
 };
-identifier_list: Box<[IValue<String>]> = {
-    identifier_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice(),
+identifier_list: ParamList = {
+    identifier_list_inner => {
+        let kind = ParamListKind::Named(<Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice());
+        let varargs = false;
+        ParamList::new(kind, varargs)
+    },
 };
 
-parameter_list_inner: (bool, VecDeque<ParamDeclaration>) = {
+parameter_list_inner: (bool, VecDeque<TypedParam>) = {
     parameter_declaration => {
         let mut v = VecDeque::new();
         v.push_front(<>);
@@ -428,13 +484,19 @@ parameter_list_inner: (bool, VecDeque<ParamDeclaration>) = {
     },
     "..." => (true, VecDeque::new()),
 };
-parameter_list: (bool, Box<[ParamDeclaration]>) = {
-    parameter_list_inner => (<>.0, <Vec<_> as From<VecDeque<_>>>::from(<>.1).into_boxed_slice())
+parameter_list: ParamList = {
+    parameter_list_inner => {
+        let kind = ParamListKind::Typed(<Vec<_> as From<VecDeque<_>>>::from(<>.1).into_boxed_slice());
+        ParamList::new(kind, <>.0)
+    }
 };
-parameter_declaration: ParamDeclaration = {
-    <spec:declaration_specifiers> <d:declarator> => ParamDeclaration::from_decl(spec, d),
-    <spec:declaration_specifiers> <ad:abstract_declarator> => ParamDeclaration::from_abs_decl(spec, ad),
-    <spec:declaration_specifiers> => ParamDeclaration::from_spec(spec),
+parameter_declaration: TypedParam = {
+    <spec:declaration_specifiers> <d:declarator> =>
+        TypedParam::from_decl(spec, d),
+    <spec:declaration_specifiers> <ad:abstract_declarator> =>
+        TypedParam::from_abs_decl(spec, ad),
+    <spec:declaration_specifiers> =>
+        TypedParam::from_spec(spec),
 };
 
 initializer: Initializer = {
@@ -484,10 +546,16 @@ initializer_list: Box<[Initializer]> = {
     initializer_list_inner => <Vec<_> as From<VecDeque<_>>>::from(<>).into_boxed_slice()
 };
 
+end_td: () = {
+    => {
+        typedef_environment.end_decl();
+    },
+};
+
 declaration: Declaration = {
-    <d:declaration_specifiers> ";" =>
+    <d:declaration_specifiers_td> <x:end_td> ";" =>
         Declaration::from_spec(d, Box::new([])),
-    <spec:declaration_specifiers> <decls:init_declarator_list> ";" =>
+    <spec:declaration_specifiers_td> <decls:init_declarator_list> <x:end_td> ";" =>
         Declaration::from_spec(spec, decls),
 };
 
@@ -679,6 +747,15 @@ declaration_specifiers: DeclSpec = {
         ds.add_type_qual(q),
 };
 
+// Use this for normal variable declarations
+// It is needed to properly discern between type names and variable names.
+declaration_specifiers_td: DeclSpec = {
+    declaration_specifiers => {
+        typedef_environment.start_decl(<>);
+        <>
+    }
+}
+
 extern {
     type Location = usize;
     type Error = lexer::LexError;
@@ -721,6 +798,7 @@ extern {
         "string literal" => Tok::String(<Box<[u8]>>),
         "char literal" => Tok::Char(<u8>),
         "id" => Tok::Id(<&'input str>),
+        "type name" => Tok::TypeName(<&'input str>),
         "..." => Tok::Ellipsis,
         ">>=" => Tok::RightAssign,
         "<<=" => Tok::LeftAssign,

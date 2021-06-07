@@ -24,9 +24,6 @@ impl StorageClassSpec {
                 buf.push(' ');
             }
         }
-        if spec != 0 {
-            buf.pop();
-        }
     }
 }
 
@@ -106,51 +103,84 @@ impl Declaration {
 }
 
 #[derive(Clone)]
-pub struct ParamDeclaration {
-    pub ty: Option<Ty>,
-    pub id: Option<IValue<String>>,
-    pub storage_class_specs: i32,
+pub struct NamedParam {
+    pub id: IValue<String>
 }
 
-impl ParamDeclaration {
+#[derive(Clone)]
+pub struct TypedParam {
+    pub storage_class_specs: i32,
+    pub id: Option<IValue<String>>,
+    pub ty: Ty,
+}
 
+#[derive(Clone)]
+pub enum ParamListKind {
+    Named(Box<[NamedParam]>),
+    Typed(Box<[TypedParam]>),
+}
+
+impl ParamListKind {
+    pub fn pretty_print(&self, buf: &mut String, si: &Interner<String>) {
+        match self {
+            ParamListKind::Named(x) => {
+                for p in x.iter() {
+                    p.pretty_print(buf, si);
+                    buf.push_str(", ");
+                }
+                buf.pop(); buf.pop();
+            },
+            ParamListKind::Typed(x)  => {
+                for p in x.iter() {
+                    p.pretty_print(buf, si);
+                    buf.push_str(", ");
+                }
+                buf.pop(); buf.pop();
+            },
+        }
+    }
+}
+
+
+impl NamedParam {
     pub fn from_id(id: IValue<String>) -> Self {
-        let ty = None;
-        ParamDeclaration { ty, id: Some(id), storage_class_specs: 0, }
+        NamedParam { id }
     }
 
+    pub fn pretty_print(&self, buf: &mut String, si: &Interner<String>) {
+        buf.push_str(si.get(self.id));
+    }
+}
+
+impl TypedParam {
+
     pub fn from_abs_decl(mut spec: DeclSpec, ad: AbsDecl) -> Self {
-        let ty = Some(ad.wrap_type(spec.get_type()));
+        let ty = ad.wrap_type(spec.get_type());
         let id = None;
-        ParamDeclaration { ty, id, storage_class_specs: spec.storage_class, }
+        TypedParam { ty, id, storage_class_specs: spec.storage_class, }
     }
 
     pub fn from_decl(mut spec: DeclSpec, decl: Declarator) -> Self {
-        let ty = Some(decl.wrap_type(spec.get_type()));
+        let ty = decl.wrap_type(spec.get_type());
         let id = Some(decl.get_id());
-        ParamDeclaration { ty, id, storage_class_specs: spec.storage_class, }
+        TypedParam { ty, id, storage_class_specs: spec.storage_class, }
     }
 
     pub fn from_spec(mut spec: DeclSpec) -> Self {
-        let ty = Some(spec.get_type());
+        let ty = spec.get_type();
         let id = None;
-        ParamDeclaration { ty, id, storage_class_specs: spec.storage_class, }
+        TypedParam { ty, id, storage_class_specs: spec.storage_class, }
     }
 
     pub fn get_type(&self) -> Ty {
-        match &self.ty {
-            Some(t) => t.clone(),
-            None => Ty::new(TyKind::TBD, false, false),
-        }
+        self.ty.clone()
     }
 
     pub fn pretty_print(&self, buf: &mut String, si: &Interner<String>) {
         StorageClassSpec::pretty_print(self.storage_class_specs, buf);
-        if let Some(t) = &self.ty {
-            t.pretty_print(buf, si);
-            if self.id.is_some() { buf.push(' '); }
-        }
+        self.ty.pretty_print(buf, si);
         if let Some(id) = self.id {
+            buf.push(' ');
             buf.push_str(si.get(id));
         }
     }
@@ -158,32 +188,38 @@ impl ParamDeclaration {
 
 #[derive(Clone)]
 pub struct ParamList {
-    pub params: Box<[ParamDeclaration]>,
+    pub kind: ParamListKind,
     pub varargs: bool,
 }
 
 impl ParamList {
-    pub fn new(params: Box<[ParamDeclaration]>, varargs: bool) -> Self {
-        ParamList { params, varargs, }
+    pub fn new(kind: ParamListKind, varargs: bool) -> Self {
+        ParamList { kind, varargs, }
+    }
+
+    pub fn empty() -> Self {
+        ParamList { kind: ParamListKind::Typed(Box::new([])), varargs: false, }
     }
 
     pub fn get_types(&self) -> Box<[Ty]> {
-        self.params
-            .iter()
-            .map(|x| x.get_type())
-            .collect::<Vec<_>>()
-            .into_boxed_slice()
+        match &self.kind {
+            ParamListKind::Named(x) =>
+                x.iter()
+                .map(|_| Ty::new(TyKind::TBD, false, false))
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+            ParamListKind::Typed(x) => 
+                x.iter()
+                .map(|x| x.ty.clone())
+                .collect::<Vec<_>>()
+                .into_boxed_slice()
+        }
     }
 
     pub fn pretty_print(&self, buf: &mut String, si: &Interner<String>) {
-        for p in self.params.iter() {
-            p.pretty_print(buf, si);
-            buf.push_str(", ");
-        }
+        self.kind.pretty_print(buf, si);
         if self.varargs {
             buf.push_str("...");
-        } else if self.params.len() > 0 {
-            buf.pop(); buf.pop();
         }
     }
 }

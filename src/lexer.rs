@@ -1,6 +1,63 @@
 use std::str::{CharIndices, FromStr, self};
 use std::borrow::Borrow;
+use std::cell::RefCell;
+use std::hash::Hash;
+use std::rc::Rc;
+
 use crate::lexer::LexErrorKind::{UnexpectedEof, InvalidCharLiteral};
+use crate::util::EnvStack;
+use crate::parse_tree::*:
+
+#[derive(Copy, Clone)]
+pub enum IdType {
+    TypeName,
+    Identifier,
+}
+
+pub struct TypeDefEnv {
+    pub ids: EnvStack<String, IdType>,
+    pub enabled: bool,
+    pub in_typedef: bool,
+}
+
+impl TypeDefEnv {
+    pub fn new() -> TypeDefEnv {
+        let enabled = true;
+        let in_typedef = false;
+        let ids = EnvStack::new();
+        TypeDefEnv { enabled, ids, in_typedef, }
+    }
+    pub fn get<Q>(&self, key: &Q) -> Option<IdType>
+    where
+        String: Borrow<Q>,
+        Q: ToOwned<Owned=String> + ?Sized + std::cmp::Eq + Hash {
+        if self.enabled {
+            self.ids.get(key).map(|x| *x)
+        } else {
+            None
+        }
+    }
+
+    pub fn add_decl(&mut self, decl: &Declaration) {
+        if decl.storage_class == StorageClassSpec::Typedef as i32 {
+            for r in decl.declarators.iter() {
+                let id = r.decl.id;
+                let ty = r.decl.wrap_type(decl.ty.clone());
+                
+            }
+        }
+    }
+
+    pub fn start_decl(&mut self, specs: DeclSpec) {
+        if specs.storage_class == StorageClassSpec::Typedef as i32 {
+            self.in_typedef = true;
+        }
+    }
+
+    pub fn end_decl(&mut self) {
+        self.in_typedef = false;
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum IntType { Unsigned, Long, }
@@ -44,7 +101,7 @@ pub enum Tok<'t> {
 
     Int((i128, IntType)), Float((f64, FloatType)), String(Box<[u8]>), Char(u8),
     Id(&'t str),
-
+    TypeName((&'t str, Ty)),
     Ellipsis,
     RightAssign, LeftAssign,
     AddAssign, SubAssign,
@@ -101,6 +158,7 @@ pub struct Lexer<'input> {
     input: &'input str,
     peek: Option<(usize, char)>,
     eof_emitted: bool,
+    typedefs: Rc<RefCell<TypeDefEnv>>,
 }
 
 fn is_digit(ch: char) -> bool {
@@ -139,7 +197,7 @@ fn is_operator_char(ch: char) -> bool {
 }
 
 impl<'input> Lexer<'input> {
-    pub fn new(input: &'input str) -> Self {
+    pub fn new(input: &'input str, tds: Rc<RefCell<TypeDefEnv>>) -> Self {
         let mut chars = input.char_indices();
         let peek = chars.next();
         Lexer {
@@ -147,6 +205,7 @@ impl<'input> Lexer<'input> {
             peek,
             input,
             eof_emitted: false,
+            typedefs: tds,
         }
     }
 
@@ -259,7 +318,17 @@ impl<'input> Lexer<'input> {
             "void" => Tok::KWVoid,
             "volatile" => Tok::KWVolatile,
             "while" => Tok::KWWhile,
-            src => Tok::Id(src),
+            src => {
+                let it = (*self.typedefs).borrow().get(src);
+                if let Some(i) = it {
+                    match i {
+                        IdType::TypeName(ty) => Tok::TypeName(src),
+                        IdType::Identifier => Tok::Id(src),
+                    }
+                } else {
+                    Tok::Id(src)
+                }
+            },
         };
 
         (start, token, end)

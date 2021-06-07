@@ -1,16 +1,21 @@
 #[macro_use] extern crate lalrpop_util;
 
-mod parse_tree;
-mod lexer;
-mod interner;
+pub mod parse_tree;
+pub mod interner;
+pub mod lexer;
+pub mod util;
+pub mod ast;
 
-
+use crate::parse_tree::*;
 use crate::interner::*;
 use crate::lexer::*;
-use crate::parse_tree::*;
+use crate::util::*;
+
+use std::rc::Rc;
+use std::cell::RefCell;
+use std::io::{self, BufRead};
 
 lalrpop_mod!(pub gram);
-use std::io::{self, BufRead};
 
 fn main() {
     let stdin = io::stdin();
@@ -19,10 +24,11 @@ fn main() {
             Ok(x) => x,
             _ => break,
         };
-        let lexer = Lexer::new(&input[..]);
+        let mut tde = Rc::new(RefCell::new(TypeDefEnv::new()));
+        let lexer = Lexer::new(&input[..], tde.clone());
         let mut str_interner = Interner::<String>::new();
         let mut byte_interner = Interner::<Box<[u8]>>::new();
-        let parsed = gram::translation_unit_programParser::new().parse(&input[..], &mut str_interner, &mut byte_interner, lexer);
+        let mut parsed = gram::translation_unit_programParser::new().parse(&input[..], &mut str_interner, &mut byte_interner, &mut tde, lexer);
         match parsed {
             Ok(x) => {
                 let mut s = String::new();

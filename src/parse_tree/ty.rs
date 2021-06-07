@@ -18,6 +18,7 @@ pub enum TySpec {
     Double,
     Structure(Structure),
     Enumeration(Enumeration),
+    Named(IValue<String>),
 }
 
 impl TySpec {
@@ -34,6 +35,7 @@ impl TySpec {
             TySpec::Double    => 6,
             TySpec::Structure(_) => 7,
             TySpec::Enumeration(_) => 8,
+            TySpec::Named(_)  => 9,
         }
     }
 }
@@ -52,6 +54,7 @@ impl fmt::Debug for TySpec {
             TySpec::Double    => "double",
             TySpec::Structure(_) => "struct { ... }",
             TySpec::Enumeration(_) => "enum { ... }",
+            TySpec::Named(_)  => "<named_type>",
         })
     }
 }
@@ -109,6 +112,13 @@ impl TySpecQualList {
         }
     }
 
+    pub fn merge(mut left: Self, mut right: Self) -> Self {
+        left.specs.append(&mut right.specs);
+        let specs = left.specs;
+        let quals = left.quals | right.quals;
+        TySpecQualList { specs, quals, }
+    }
+
     fn get_ty_kind(&mut self) -> TyKind {
         use TySpec::*;
         use TyKind::*;
@@ -139,6 +149,7 @@ impl TySpecQualList {
                                 => TyKind::Structure(s.clone()),
             [TySpec::Enumeration(e)]
                                 => TyKind::Enumeration(e.clone()),
+            [TySpec::Named(id)] => TyKind::Named(*id),
             _                   => panic!("Unrecognized type, {:?} TODO: Add actual error handling.", &self.specs[..])
         }
     }
@@ -280,16 +291,16 @@ impl FloatTy {
 
 #[derive(Clone)]
 pub enum TyKind {
-    Named(IValue<String>),
-    Structure(Structure),
-    Enumeration(Enumeration),
-    Ptr(Box<Ty>),
-    Fn(Box<Ty>, Box<[Ty]>),
-    Integral(IntegralTy),
-    Float(FloatTy),
-    Array(Box<Ty>, Option<Box<TaggedExpr>>),
-    Void,
     TBD,
+    Void,
+    Ptr(Box<Ty>),
+    Float(FloatTy),
+    Integral(IntegralTy),
+    Structure(Structure),
+    Named(IValue<String>),
+    Fn(Box<Ty>, Box<[Ty]>),
+    Enumeration(Enumeration),
+    Array(Box<Ty>, Option<Box<TaggedExpr>>),
 }
 
 impl TyKind {

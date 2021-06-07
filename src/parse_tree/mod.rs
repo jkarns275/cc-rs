@@ -1,9 +1,11 @@
 mod ty;
+mod env;
 mod expr;
 mod abs_decl;
 mod function;
 mod data_type;
 mod statement;
+mod type_check;
 mod declarator;
 mod declaration;
 
@@ -12,12 +14,16 @@ pub use crate::interner::*;
 
 pub use declaration::*;
 pub use declarator::*;
+pub use type_check::*;
 pub use statement::*;
 pub use data_type::*;
 pub use function::*;
 pub use abs_decl::*;
 pub use expr::*;
+pub use env::*;
 pub use ty::*;
+
+pub use crate::ast;
 
 
 pub enum TranslationUnit {

@@ -127,18 +127,6 @@ pub enum DirDecl {
 
 impl DirDecl {
 
-    /// Create a function with the given parameter names that don't have a type specified.
-    /// Since they don't have types just assign them int types.
-    /// TODO: This should be a warning of some kind, since not specifying a type is sus.
-    pub fn id_fn(decl: DirDecl, args: Box<[IValue<String>]>) -> Self {
-        let args = args
-            .into_iter()
-            .map(|&x| ParamDeclaration::from_id(x))
-            .collect::<Vec<_>>();
-        let param_list = ParamList::new(args.into_boxed_slice(), false);
-        DirDecl::Fn(Box::new(decl), param_list)
-    }
-
     pub fn get_id(&self) -> IValue<String> {
         use DirDecl::*;
 
